@@ -1,17 +1,18 @@
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { formatDate } from '@/lib/utils'
 import { AddUserButton } from '@/components/admin/AddUserButton'
 import { Badge } from '@/components/ui/badge'
 
 export default async function UsersPage() {
-  const supabase = await createClient()
-  const { data: { user: authUser } } = await supabase.auth.getUser()
-  if (!authUser) redirect('/login')
+  const authClient = await createClient()
+  const { data: { user: authUser } } = await authClient.auth.getUser()
+  if (!authUser) redirect('/dashboard')
 
-  const { data: me } = await supabase.from('users').select('role').eq('id', authUser.id).single()
+  const { data: me } = await authClient.from('users').select('role').eq('id', authUser.id).single()
   if (me?.role !== 'admin') redirect('/dashboard')
 
+  const supabase = await createAdminClient()
   const { data: users } = await supabase
     .from('users').select('*').order('created_at', { ascending: true })
 

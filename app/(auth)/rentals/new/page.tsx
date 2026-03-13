@@ -1,5 +1,5 @@
-import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
+import { createAdminClient } from '@/lib/supabase/server'
+import { cookies } from 'next/headers'
 import { RentalForm } from '@/components/rentals/RentalForm'
 import { ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
@@ -10,11 +10,11 @@ export default async function NewRentalPage({
 }: {
   searchParams: Promise<{ equipment_id?: string }>
 }) {
-  const supabase = await createClient()
-  const { data: { user: authUser } } = await supabase.auth.getUser()
-  if (!authUser) redirect('/login')
-
   const params = await searchParams
+  const supabase = await createAdminClient()
+  const cookieStore = await cookies()
+  const username = cookieStore.get('username')?.value ?? ''
+
   const { data: equipment } = await supabase
     .from('equipment_with_status')
     .select('id, name, category_name, current_status')
@@ -30,7 +30,7 @@ export default async function NewRentalPage({
         </Link>
       </div>
       <h1 className="text-2xl font-bold text-gray-900">機材を予約する</h1>
-      <RentalForm equipment={equipment ?? []} defaultEquipmentId={params.equipment_id} />
+      <RentalForm equipment={equipment ?? []} defaultEquipmentId={params.equipment_id} renterName={username} />
     </div>
   )
 }

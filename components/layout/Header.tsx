@@ -3,9 +3,6 @@
 import { User } from '@/types'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { LogOut, Clapperboard } from 'lucide-react'
 
 interface HeaderProps {
   user: User
@@ -14,30 +11,26 @@ interface HeaderProps {
 export function Header({ user }: HeaderProps) {
   const router = useRouter()
   const supabase = createClient()
+  const isAdmin = user.role === 'admin' && user.id !== 'guest'
 
   async function handleLogout() {
-    await supabase.auth.signOut()
+    if (isAdmin) {
+      await supabase.auth.signOut()
+    } else {
+      await fetch('/api/auth/set-user', { method: 'DELETE' })
+    }
     router.push('/login')
     router.refresh()
   }
 
   return (
-    <header className="h-14 border-b bg-white flex items-center justify-between px-6 shrink-0">
-      <div className="flex items-center gap-2">
-        <Clapperboard className="h-5 w-5 text-gray-700" />
-        <span className="font-semibold text-gray-900">機材管理システム</span>
-      </div>
+    <header className="h-14 border-b bg-white flex items-center justify-between px-6 shrink-0 md:hidden">
+      <span className="font-bold text-gray-900">Gear Flow</span>
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2 text-sm text-gray-600">
-          <span>{user.name}</span>
-          {user.role === 'admin' && (
-            <Badge variant="secondary" className="text-xs">管理者</Badge>
-          )}
-        </div>
-        <Button variant="ghost" size="sm" onClick={handleLogout} className="gap-1.5">
-          <LogOut className="h-4 w-4" />
-          ログアウト
-        </Button>
+        <span className="text-sm text-gray-600">{user.name}</span>
+        <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-gray-600">
+          {isAdmin ? 'ログアウト' : '名前を変更'}
+        </button>
       </div>
     </header>
   )

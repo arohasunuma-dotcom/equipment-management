@@ -1,35 +1,34 @@
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { formatDate } from '@/lib/utils'
 import { RentalStatus } from '@/types'
 
 const statusLabel: Record<RentalStatus, string> = {
-  reserved: '予約中',
-  renting: '貸出中',
-  returned: '返却済み',
+  active: '貸出中',
+  completed: '返却済み',
   cancelled: 'キャンセル',
-  overdue: '返却期限超過',
+  overdue: '返却遅延',
 }
 
 const statusColor: Record<RentalStatus, string> = {
-  reserved: 'bg-blue-100 text-blue-700',
-  renting: 'bg-green-100 text-green-700',
-  returned: 'bg-gray-100 text-gray-600',
+  active: 'bg-green-100 text-green-700',
+  completed: 'bg-gray-100 text-gray-600',
   cancelled: 'bg-gray-100 text-gray-400',
   overdue: 'bg-red-100 text-red-700',
 }
 
 export default async function HistoryPage() {
-  const supabase = await createClient()
-  const { data: { user: authUser } } = await supabase.auth.getUser()
-  if (!authUser) redirect('/login')
+  const authClient = await createClient()
+  const { data: { user: authUser } } = await authClient.auth.getUser()
+  if (!authUser) redirect('/dashboard')
 
-  const { data: me } = await supabase.from('users').select('role').eq('id', authUser.id).single()
+  const { data: me } = await authClient.from('users').select('role').eq('id', authUser.id).single()
   if (me?.role !== 'admin') redirect('/dashboard')
 
+  const supabase = await createAdminClient()
   const { data: rentals } = await supabase
     .from('rentals')
-    .select('*, equipment:equipment(id, name), user:users(id, name)')
+    .select('*, rental_equipment(equipment_id, equipment:equipment(id, name)), renter_name')
     .order('created_at', { ascending: false })
     .limit(100)
 
@@ -50,20 +49,23 @@ export default async function HistoryPage() {
             </tr>
           </thead>
           <tbody className="divide-y">
-            {rentals?.map((r) => (
-              <tr key={r.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3 font-medium text-gray-900">{(r as any).equipment?.name}</td>
-                <td className="px-4 py-3 text-gray-600">{(r as any).user?.name}</td>
-                <td className="px-4 py-3 text-gray-600">{formatDate(r.start_date)}</td>
-                <td className="px-4 py-3 text-gray-600">{formatDate(r.end_date)}</td>
-                <td className="px-4 py-3 text-gray-600 max-w-xs truncate">{r.purpose}</td>
-                <td className="px-4 py-3">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColor[r.status as RentalStatus]}`}>
-                    {statusLabel[r.status as RentalStatus]}
-                  </span>
-                </td>
-              </tr>
-            ))}
+            {rentals?.map((r) => {
+              const eqNames = (r as any).rental_equipment?.map((re: any) => re.equipment?.name).filter(Boolean) ?? []
+              return (
+                <tr key={r.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3 font-medium text-gray-900">{eqNames.join(', ') || '-'}</td>
+                  <td className="px-4 py-3 text-gray-600">{(r as any).renter_name}</td>
+                  <td className="px-4 py-3 text-gray-600">{formatDate(r.start_date)}</td>
+                  <td className="px-4 py-3 text-gray-600">{formatDate(r.end_date)}</td>
+                  <td className="px-4 py-3 text-gray-600 max-w-xs truncate">{r.purpose}</td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColor[r.status as RentalStatus] ?? 'bg-gray-100 text-gray-500'}`}>
+                      {statusLabel[r.status as RentalStatus] ?? r.status}
+                    </span>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
         {(!rentals || rentals.length === 0) && (

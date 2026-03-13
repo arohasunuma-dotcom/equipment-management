@@ -1,9 +1,9 @@
-import { createClient } from '@/lib/supabase/server'
-import { notFound, redirect } from 'next/navigation'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
+import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { buttonVariants } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { formatDate, formatDateShort } from '@/lib/utils'
+import { formatDate } from '@/lib/utils'
 import { EquipmentCurrentStatus } from '@/types'
 import { ArrowLeft, Camera, CalendarDays, Pencil } from 'lucide-react'
 
@@ -25,11 +25,16 @@ const statusColor: Record<EquipmentCurrentStatus, string> = {
 
 export default async function EquipmentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user: authUser } } = await supabase.auth.getUser()
-  if (!authUser) redirect('/login')
+  const supabase = await createAdminClient()
 
-  const { data: user } = await supabase.from('users').select('role').eq('id', authUser.id).single()
+  // 管理者判定
+  const authClient = await createClient()
+  const { data: { user: authUser } } = await authClient.auth.getUser()
+  let isAdmin = false
+  if (authUser) {
+    const { data: me } = await authClient.from('users').select('role').eq('id', authUser.id).single()
+    isAdmin = me?.role === 'admin'
+  }
 
   const { data: eq } = await supabase
     .from('equipment_with_status')
@@ -44,7 +49,7 @@ export default async function EquipmentDetailPage({ params }: { params: Promise<
 
   const { data: upcomingRentals } = await supabase
     .from('rentals')
-    .select('id, user_id, start_date, end_date, status, user:users(name)')
+    .select('id, renter_name, start_date, end_date, status')
     .eq('equipment_id', id)
     .not('status', 'in', '("cancelled","returned")')
     .gte('end_date', today)
@@ -61,7 +66,7 @@ export default async function EquipmentDetailPage({ params }: { params: Promise<
           <ArrowLeft className="h-4 w-4 mr-1" />
           機材一覧に戻る
         </Link>
-        {user?.role === 'admin' && (
+        {isAdmin && (
           <Link href={`/equipment/${id}/edit`} className={buttonVariants({ variant: "outline", size: "sm" }) + " ml-auto"}>
             <Pencil className="h-4 w-4 mr-1" />
             編集
@@ -114,10 +119,7 @@ export default async function EquipmentDetailPage({ params }: { params: Promise<
                   </span>
                 </div>
                 <span className="text-xs text-gray-500">
-                  {user?.role === 'admin'
-                    ? (r as any).user?.name
-                    : r.user_id === authUser.id ? 'あなた' : '予約済み'
-                  }
+                  {isAdmin ? (r as any).renter_name : '予約済み'}
                 </span>
               </li>
             ))}

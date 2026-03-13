@@ -23,19 +23,28 @@ export async function updateSession(request: NextRequest) {
     }
   )
 
-  const { data: { user } } = await supabase.auth.getUser()
-
   const { pathname } = request.nextUrl
 
-  // 未認証でログイン画面以外へのアクセス → /login にリダイレクト
-  if (!user && pathname !== '/login') {
+  // ログイン画面・認証API は常に通過
+  if (pathname === '/login' || pathname.startsWith('/api/auth/')) {
+    return supabaseResponse
+  }
+
+  // Supabase Auth セッション確認（管理者ログイン）
+  const { data: { user } } = await supabase.auth.getUser()
+
+  // username cookie 確認（一般スタッフ）
+  const username = request.cookies.get('username')?.value
+
+  // 未認証かつ username cookie もない場合 → /login にリダイレクト
+  if (!user && !username) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
   }
 
-  // 認証済みでログイン画面へのアクセス → /dashboard にリダイレクト
-  if (user && pathname === '/login') {
+  // 認証済みまたは username cookie あり → ダッシュボードへのログインリダイレクト
+  if ((user || username) && pathname === '/login') {
     const url = request.nextUrl.clone()
     url.pathname = '/dashboard'
     return NextResponse.redirect(url)

@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { buttonVariants } from '@/components/ui/button'
@@ -6,13 +6,14 @@ import { EquipmentForm } from '@/components/equipment/EquipmentForm'
 import { ArrowLeft } from 'lucide-react'
 
 export default async function NewEquipmentPage() {
-  const supabase = await createClient()
-  const { data: { user: authUser } } = await supabase.auth.getUser()
-  if (!authUser) redirect('/login')
+  const authClient = await createClient()
+  const { data: { user: authUser } } = await authClient.auth.getUser()
+  if (!authUser) redirect('/equipment')
 
-  const { data: me } = await supabase.from('users').select('role').eq('id', authUser.id).single()
+  const { data: me } = await authClient.from('users').select('role').eq('id', authUser.id).single()
   if (me?.role !== 'admin') redirect('/equipment')
 
+  const supabase = await createAdminClient()
   const { data: categories } = await supabase.from('categories').select('*').order('name')
 
   return (

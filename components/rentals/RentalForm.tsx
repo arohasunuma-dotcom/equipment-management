@@ -13,9 +13,10 @@ import { Loader2, AlertCircle } from 'lucide-react'
 interface Props {
   equipment: { id: string; name: string; category_name: string; current_status: string }[]
   defaultEquipmentId?: string
+  renterName?: string
 }
 
-export function RentalForm({ equipment, defaultEquipmentId }: Props) {
+export function RentalForm({ equipment, defaultEquipmentId, renterName = '' }: Props) {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<{ message: string; conflicting_period?: { start_date: string; end_date: string } } | null>(null)
@@ -41,7 +42,7 @@ export function RentalForm({ equipment, defaultEquipmentId }: Props) {
     const res = await fetch('/api/rentals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
+      body: JSON.stringify({ ...form, renter_name: renterName }),
     })
     const json = await res.json()
     setLoading(false)
@@ -69,6 +70,12 @@ export function RentalForm({ equipment, defaultEquipmentId }: Props) {
               </p>
             )}
           </div>
+        </div>
+      )}
+
+      {renterName && (
+        <div className="p-3 bg-gray-50 border rounded-lg text-sm text-gray-600">
+          予約者: <span className="font-medium text-gray-900">{renterName}</span>
         </div>
       )}
 

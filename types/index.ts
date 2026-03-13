@@ -1,7 +1,5 @@
 export type UserRole = 'user' | 'admin'
-
-export type RentalStatus = 'reserved' | 'renting' | 'returned' | 'cancelled' | 'overdue'
-
+export type RentalStatus = 'active' | 'overdue' | 'completed' | 'cancelled'
 export type EquipmentCurrentStatus = 'available' | 'reserved' | 'renting' | 'overdue' | 'inactive'
 
 export interface User {
@@ -30,29 +28,28 @@ export interface Equipment {
   created_at: string
   category?: Category
   current_status?: EquipmentCurrentStatus
+  category_name?: string
 }
 
-export interface BookedPeriod {
-  start_date: string
-  end_date: string
-  status: RentalStatus
-  user_name?: string
-  purpose?: string
+export interface RentalEquipment {
+  equipment_id: string
+  equipment?: Equipment
 }
 
 export interface Rental {
   id: string
-  user_id: string
-  equipment_id: string
+  user_id: string | null
+  renter_name: string | null
+  equipment_id?: string | null
+  shooting_date: string | null
   start_date: string
   end_date: string
   purpose: string
+  return_location: string | null
   status: RentalStatus
   notes: string | null
   created_at: string
-  user?: Pick<User, 'id' | 'name' | 'email'>
-  equipment?: Pick<Equipment, 'id' | 'name' | 'image_url'> & { category?: Category }
-  return_record?: ReturnRecord | null
+  rental_equipment?: RentalEquipment[]
 }
 
 export interface ReturnRecord {
