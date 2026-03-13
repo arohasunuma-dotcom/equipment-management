@@ -10,7 +10,6 @@ import { Clapperboard, Loader2 } from 'lucide-react'
 
 export default function LoginPage() {
   const router = useRouter()
-  const supabase = createClient()
   const [showAdminForm, setShowAdminForm] = useState(false)
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -38,6 +37,7 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
 
+    const supabase = createClient()
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) {
       setError('メールアドレスまたはパスワードが正しくありません')
