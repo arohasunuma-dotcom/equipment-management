@@ -1,4 +1,5 @@
-import { createClient, createAdminClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/server'
+import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -15,13 +16,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
 
-  // 管理者のみ編集可能
-  const authClient = await createClient()
-  const { data: { user: authUser } } = await authClient.auth.getUser()
-  if (!authUser) return NextResponse.json({ data: null, error: { code: 'FORBIDDEN', message: '管理者のみ編集できます' } }, { status: 403 })
-
-  const { data: me } = await authClient.from('users').select('role').eq('id', authUser.id).single()
-  if (me?.role !== 'admin') return NextResponse.json({ data: null, error: { code: 'FORBIDDEN', message: '管理者のみ編集できます' } }, { status: 403 })
+  const cookieStore = await cookies()
+  const username = cookieStore.get('username')?.value
+  if (!username) return NextResponse.json({ data: null, error: { code: 'FORBIDDEN', message: 'ログインが必要です' } }, { status: 403 })
 
   const body = await req.json()
 
@@ -44,13 +41,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
 
-  // 管理者のみ削除可能
-  const authClient = await createClient()
-  const { data: { user: authUser } } = await authClient.auth.getUser()
-  if (!authUser) return NextResponse.json({ data: null, error: { code: 'FORBIDDEN', message: '管理者のみ削除できます' } }, { status: 403 })
-
-  const { data: me } = await authClient.from('users').select('role').eq('id', authUser.id).single()
-  if (me?.role !== 'admin') return NextResponse.json({ data: null, error: { code: 'FORBIDDEN', message: '管理者のみ削除できます' } }, { status: 403 })
+  const cookieStore = await cookies()
+  const username = cookieStore.get('username')?.value
+  if (!username) return NextResponse.json({ data: null, error: { code: 'FORBIDDEN', message: 'ログインが必要です' } }, { status: 403 })
 
   const supabase = await createAdminClient()
   const { error } = await supabase.from('equipment').delete().eq('id', id)

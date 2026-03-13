@@ -14,6 +14,8 @@ export function EquipmentManager({ equipment: initialEquipment, isAdmin }: Props
   const [activeTab, setActiveTab] = useState<'active' | 'deleted'>('active')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [formData, setFormData] = useState({ name: '', image_url: '', notes: '' })
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
 
   const activeItems = equipment.filter(e => e.is_active)
   const deletedItems = equipment.filter(e => !e.is_active)
@@ -22,11 +24,13 @@ export function EquipmentManager({ equipment: initialEquipment, isAdmin }: Props
   function startAdd() {
     setEditingId('new')
     setFormData({ name: '', image_url: '', notes: '' })
+    setError(null)
   }
 
   function startEdit(item: Equipment) {
     setEditingId(item.id)
     setFormData({ name: item.name, image_url: item.image_url || '', notes: item.notes || '' })
+    setError(null)
   }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -39,24 +43,34 @@ export function EquipmentManager({ equipment: initialEquipment, isAdmin }: Props
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (editingId === 'new') {
-      const res = await fetch('/api/equipment', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formData, category_id: null }),
-      })
-      const json = await res.json()
-      if (!json.error) setEquipment(prev => [json.data, ...prev])
-    } else if (editingId) {
-      const res = await fetch(`/api/equipment/${editingId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      })
-      const json = await res.json()
-      if (!json.error) setEquipment(prev => prev.map(e => e.id === editingId ? { ...e, ...json.data } : e))
+    setError(null)
+    setLoading(true)
+    try {
+      if (editingId === 'new') {
+        const res = await fetch('/api/equipment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...formData, category_id: null }),
+        })
+        const json = await res.json()
+        if (json.error) { setError(json.error.message); return }
+        setEquipment(prev => [json.data, ...prev])
+      } else if (editingId) {
+        const res = await fetch(`/api/equipment/${editingId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(formData),
+        })
+        const json = await res.json()
+        if (json.error) { setError(json.error.message); return }
+        setEquipment(prev => prev.map(e => e.id === editingId ? { ...e, ...json.data } : e))
+      }
+      setEditingId(null)
+    } catch (err) {
+      setError('通信エラーが発生しました')
+    } finally {
+      setLoading(false)
     }
-    setEditingId(null)
   }
 
   async function handleDelete() {
@@ -116,6 +130,9 @@ export function EquipmentManager({ equipment: initialEquipment, isAdmin }: Props
               </button>
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto max-h-[70vh]">
+              {error && (
+                <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{error}</div>
+              )}
               <div className="flex flex-col items-center gap-4 py-2">
                 {formData.image_url ? (
                   <img src={formData.image_url} alt="Preview" className="w-40 h-40 object-cover rounded-xl border-2 border-dashed border-gray-200 bg-gray-50" />
@@ -146,8 +163,8 @@ export function EquipmentManager({ equipment: initialEquipment, isAdmin }: Props
                 )}
                 <div className="flex gap-3 ml-auto">
                   <button type="button" onClick={() => setEditingId(null)} className="px-6 py-2 text-sm font-medium text-gray-500">キャンセル</button>
-                  <button type="submit" className="bg-blue-600 text-white px-8 py-2 rounded-xl hover:bg-blue-700 font-bold">
-                    {editingId === 'new' ? '登録する' : '保存する'}
+                  <button type="submit" disabled={loading} className="bg-blue-600 text-white px-8 py-2 rounded-xl hover:bg-blue-700 font-bold disabled:opacity-50">
+                    {loading ? '処理中...' : editingId === 'new' ? '登録する' : '保存する'}
                   </button>
                 </div>
               </div>

@@ -1,4 +1,4 @@
-import { createClient, createAdminClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/server'
 import { EquipmentManager } from '@/components/equipment/EquipmentManager'
 
 export default async function EquipmentPage() {
@@ -8,13 +8,5 @@ export default async function EquipmentPage() {
     .select('*')
     .order('created_at', { ascending: false })
 
-  const authClient = await createClient()
-  const { data: { user: authUser } } = await authClient.auth.getUser()
-  let isAdmin = false
-  if (authUser) {
-    const { data: me } = await authClient.from('users').select('role').eq('id', authUser.id).single()
-    isAdmin = me?.role === 'admin'
-  }
-
-  return <EquipmentManager equipment={equipment ?? []} isAdmin={isAdmin} />
+  return <EquipmentManager equipment={equipment ?? []} isAdmin={true} />
 }

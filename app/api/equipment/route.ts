@@ -1,4 +1,5 @@
-import { createClient, createAdminClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/server'
+import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(req: NextRequest) {
@@ -23,13 +24,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  // 管理者のみ登録可能
-  const authClient = await createClient()
-  const { data: { user: authUser } } = await authClient.auth.getUser()
-  if (!authUser) return NextResponse.json({ data: null, error: { code: 'FORBIDDEN', message: '管理者のみ登録できます' } }, { status: 403 })
-
-  const { data: me } = await authClient.from('users').select('role').eq('id', authUser.id).single()
-  if (me?.role !== 'admin') return NextResponse.json({ data: null, error: { code: 'FORBIDDEN', message: '管理者のみ登録できます' } }, { status: 403 })
+  // ログインユーザーなら誰でも登録可能（cookie認証チェック）
+  const cookieStore = await cookies()
+  const username = cookieStore.get('username')?.value
+  if (!username) return NextResponse.json({ data: null, error: { code: 'FORBIDDEN', message: 'ログインが必要です' } }, { status: 403 })
 
   const body = await req.json()
   const { name, notes, image_url, category_id, serial_number } = body
