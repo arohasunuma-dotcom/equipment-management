@@ -161,12 +161,14 @@ export function RentalManager({ rentals: initialRentals, equipment, currentUser 
   }
 
   async function handleDelete(id: string) {
-    if (!window.confirm('この予約を削除しますか？この操作は取り消せません。')) return
+    if (!window.confirm('削除しますか？この操作は取り消せません。')) return
     const res = await fetch(`/api/rentals/${id}`, { method: 'DELETE' })
     const json = await res.json()
-    if (!json.error) {
-      setRentals(prev => prev.filter(r => r.id !== id))
+    if (json.error) {
+      alert('削除に失敗しました: ' + json.error.message)
+      return
     }
+    setRentals(prev => prev.filter(r => r.id !== id))
   }
 
   function RentalRow({ rental }: { rental: Rental }) {
@@ -200,7 +202,7 @@ export function RentalManager({ rentals: initialRentals, equipment, currentUser 
           </span>
         </td>
         <td className="px-4 py-3">
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="flex items-center gap-1">
             {(rental.status === 'active' || rental.status === 'overdue') && (
               <>
                 <button

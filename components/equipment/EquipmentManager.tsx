@@ -97,6 +97,15 @@ export function EquipmentManager({ equipment: initialEquipment, isAdmin }: Props
     setActiveTab('active')
   }
 
+  async function handleHardDelete(id: string) {
+    if (!window.confirm('この機材を完全に削除しますか？この操作は取り消せません。')) return
+    const res = await fetch(`/api/equipment/${id}`, { method: 'DELETE' })
+    const json = await res.json()
+    if (!json.error) {
+      setEquipment(prev => prev.filter(e => e.id !== id))
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -207,10 +216,16 @@ export function EquipmentManager({ equipment: initialEquipment, isAdmin }: Props
                   )
                 ) : (
                   isAdmin ? (
-                    <button onClick={() => handleRestore(item.id)} className="flex-1 flex justify-center items-center gap-2 text-xs font-bold text-emerald-600 hover:text-emerald-800 py-2 bg-white rounded-xl border border-emerald-100">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                      利用可能に戻す
-                    </button>
+                    <div className="flex gap-2 w-full opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => handleRestore(item.id)} className="flex-1 flex justify-center items-center gap-1 text-xs font-bold text-emerald-600 hover:text-emerald-800 py-2 bg-white rounded-xl border border-emerald-200">
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                        復元
+                      </button>
+                      <button onClick={() => handleHardDelete(item.id)} className="flex-1 flex justify-center items-center gap-1 text-xs font-bold text-rose-500 hover:text-rose-700 py-2 bg-white rounded-xl border border-rose-200">
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                        完全削除
+                      </button>
+                    </div>
                   ) : (
                     <span className="text-xs text-gray-400">利用停止中</span>
                   )
