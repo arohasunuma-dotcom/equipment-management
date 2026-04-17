@@ -10,17 +10,33 @@ import { toast } from 'sonner'
 import { today } from '@/lib/utils'
 import { Loader2, AlertCircle } from 'lucide-react'
 
+interface StaffMember {
+  id: string
+  name: string
+}
+
 interface Props {
   equipment: { id: string; name: string; category_name: string; current_status: string }[]
   defaultEquipmentId?: string
   renterName?: string
+  staffMembers?: StaffMember[]
 }
 
-export function RentalForm({ equipment, defaultEquipmentId, renterName = '' }: Props) {
+export function RentalForm({ equipment, defaultEquipmentId, renterName = '', staffMembers = [] }: Props) {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<{ message: string; conflicting_period?: { start_date: string; end_date: string } } | null>(null)
 
+  // staffMembersにcookieユーザーが含まれていない場合は先頭に追加
+  const memberOptions: StaffMember[] = renterName
+    ? staffMembers.some((m) => m.name === renterName)
+      ? staffMembers
+      : [{ id: '__cookie__', name: renterName }, ...staffMembers]
+    : staffMembers
+
+  const defaultRenter = renterName || (memberOptions[0]?.name ?? '')
+
+  const [selectedRenter, setSelectedRenter] = useState(defaultRenter)
   const [form, setForm] = useState({
     equipment_id: defaultEquipmentId ?? '',
     start_date: '',
@@ -42,7 +58,7 @@ export function RentalForm({ equipment, defaultEquipmentId, renterName = '' }: P
     const res = await fetch('/api/rentals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...form, renter_name: renterName }),
+      body: JSON.stringify({ ...form, renter_name: selectedRenter }),
     })
     const json = await res.json()
     setLoading(false)
@@ -73,11 +89,32 @@ export function RentalForm({ equipment, defaultEquipmentId, renterName = '' }: P
         </div>
       )}
 
-      {renterName && (
-        <div className="p-3 bg-gray-50 border rounded-lg text-sm text-gray-600">
-          予約者: <span className="font-medium text-gray-900">{renterName}</span>
-        </div>
-      )}
+      {/* 担当者選択 */}
+      <div className="space-y-1.5">
+        <Label htmlFor="renter_name">担当者 <span className="text-red-500">*</span></Label>
+        {memberOptions.length > 0 ? (
+          <select
+            id="renter_name"
+            value={selectedRenter}
+            onChange={(e) => setSelectedRenter(e.target.value)}
+            required
+            className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+          >
+            <option value="">担当者を選択してください</option>
+            {memberOptions.map((m) => (
+              <option key={m.id} value={m.name}>{m.name}</option>
+            ))}
+          </select>
+        ) : (
+          <Input
+            id="renter_name"
+            value={selectedRenter}
+            onChange={(e) => setSelectedRenter(e.target.value)}
+            placeholder="担当者名を入力"
+            required
+          />
+        )}
+      </div>
 
       <div className="space-y-1.5">
         <Label htmlFor="equipment_id">機材 <span className="text-red-500">*</span></Label>

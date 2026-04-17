@@ -19,7 +19,7 @@ export function Header({ user }: HeaderProps) {
     } else {
       await fetch('/api/auth/set-user', { method: 'DELETE' })
     }
-    router.push('/login')
+    router.push('/dashboard')
     router.refresh()
   }
 

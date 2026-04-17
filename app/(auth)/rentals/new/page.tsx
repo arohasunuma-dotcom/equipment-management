@@ -15,11 +15,18 @@ export default async function NewRentalPage({
   const cookieStore = await cookies()
   const username = cookieStore.get('username')?.value ?? ''
 
-  const { data: equipment } = await supabase
-    .from('equipment_with_status')
-    .select('id, name, category_name, current_status')
-    .eq('is_active', true)
-    .order('name')
+  const [{ data: equipment }, { data: staffMembers }] = await Promise.all([
+    supabase
+      .from('equipment_with_status')
+      .select('id, name, category_name, current_status')
+      .eq('is_active', true)
+      .order('name'),
+    supabase
+      .from('staff_members')
+      .select('id, name')
+      .eq('is_active', true)
+      .order('created_at', { ascending: true }),
+  ])
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -30,7 +37,12 @@ export default async function NewRentalPage({
         </Link>
       </div>
       <h1 className="text-2xl font-bold text-gray-900">機材を予約する</h1>
-      <RentalForm equipment={equipment ?? []} defaultEquipmentId={params.equipment_id} renterName={username} />
+      <RentalForm
+        equipment={equipment ?? []}
+        defaultEquipmentId={params.equipment_id}
+        renterName={username}
+        staffMembers={staffMembers ?? []}
+      />
     </div>
   )
 }

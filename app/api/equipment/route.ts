@@ -6,7 +6,7 @@ export async function GET(req: NextRequest) {
   const supabase = await createAdminClient()
 
   const url = new URL(req.url)
-  let query = supabase.from('equipment_with_status').select('*').order('created_at', { ascending: false })
+  let query = supabase.from('equipment_with_status').select('id,name,notes,serial_number,image_url,is_active,category_id,category_name,current_status,created_at').order('created_at', { ascending: false })
 
   const q = url.searchParams.get('q')
   if (q) query = query.ilike('name', `%${q}%`)

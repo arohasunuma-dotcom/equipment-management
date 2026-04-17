@@ -6,7 +6,7 @@ import { CalendarDays } from 'lucide-react'
 export default async function CalendarPage() {
   const supabase = await createClient()
   const { data: { user: authUser } } = await supabase.auth.getUser()
-  if (!authUser) redirect('/login')
+  if (!authUser) return null
 
   const { data: me } = await supabase.from('users').select('role').eq('id', authUser.id).single()
   const isAdmin = me?.role === 'admin'

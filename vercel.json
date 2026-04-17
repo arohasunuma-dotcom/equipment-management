@@ -1,0 +1,24 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/digest",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/fb-reminder",
+      "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron/edit-alert",
+      "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron/sync-calendar",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/yt-milestone-alert",
+      "schedule": "0 9 * * *"
+    }
+  ]
+}

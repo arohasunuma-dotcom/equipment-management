@@ -7,6 +7,7 @@ interface Props {
   rentals: Rental[]
   equipment: Equipment[]
   currentUser: string
+  staffMembers: { id: string; name: string }[]
 }
 
 type FormData = {
@@ -45,7 +46,7 @@ const statusBadge: Record<string, string> = {
   cancelled: 'bg-gray-100 text-gray-400 border border-gray-200',
 }
 
-export function RentalManager({ rentals: initialRentals, equipment, currentUser }: Props) {
+export function RentalManager({ rentals: initialRentals, equipment, currentUser, staffMembers }: Props) {
   const [rentals, setRentals] = useState<Rental[]>(initialRentals)
   const [modalOpen, setModalOpen] = useState(false)
   const [editingRental, setEditingRental] = useState<Rental | null>(null)
@@ -53,23 +54,24 @@ export function RentalManager({ rentals: initialRentals, equipment, currentUser 
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
 
+  const todayStr = new Date().toISOString().split('T')[0]
+
   const activeRentals = rentals.filter(r => r.status === 'active' || r.status === 'overdue')
   const completedRentals = rentals.filter(r => r.status === 'completed' || r.status === 'cancelled')
 
-  // Filter equipment that conflicts with selected date range (excluding current rental if editing)
+  const overdueRentals = activeRentals.filter(r => r.end_date < todayStr)
+
+  // Block any equipment that has ANY active/overdue (unreturned) rental
   const availableEquipment = useMemo(() => {
-    if (!form.start_date || !form.end_date) return equipment
     return equipment.filter(eq => {
-      const conflicting = rentals.find(r => {
+      const hasUnreturned = rentals.some(r => {
         if (editingRental && r.id === editingRental.id) return false
         if (r.status === 'completed' || r.status === 'cancelled') return false
-        const hasEquip = r.rental_equipment?.some(re => re.equipment_id === eq.id)
-        if (!hasEquip) return false
-        return r.start_date <= form.end_date && r.end_date >= form.start_date
+        return r.rental_equipment?.some(re => re.equipment_id === eq.id)
       })
-      return !conflicting
+      return !hasUnreturned
     })
-  }, [equipment, rentals, form.start_date, form.end_date, editingRental])
+  }, [equipment, rentals, editingRental])
 
   function openAddModal() {
     setEditingRental(null)
@@ -173,15 +175,23 @@ export function RentalManager({ rentals: initialRentals, equipment, currentUser 
 
   function RentalRow({ rental }: { rental: Rental }) {
     const eqNames = rental.rental_equipment?.map(re => re.equipment?.name ?? re.equipment_id) ?? []
+    const visibleEq = eqNames.slice(0, 3)
+    const extraCount = eqNames.length - 3
+
+    const isOverdue = rental.end_date < todayStr && rental.status === 'active'
+    const displayStatus = isOverdue ? 'overdue' : rental.status
 
     return (
-      <tr className="border-b border-gray-50 hover:bg-gray-50/50 group transition-colors">
-        <td className="px-4 py-3">
+      <tr className={`border-b border-gray-50 hover:bg-gray-50/50 group transition-colors ${isOverdue ? 'bg-rose-50/30' : ''}`}>
+        <td className="px-4 py-3 w-48 min-w-[160px]">
           <div className="flex flex-col gap-1">
-            <div className="flex flex-wrap gap-1">
-              {eqNames.map((n, i) => (
-                <span key={i} className="text-xs font-medium bg-blue-50 text-blue-700 px-2 py-0.5 rounded-lg border border-blue-100">{n}</span>
+            <div className="flex flex-wrap gap-1 max-w-[200px]">
+              {visibleEq.map((n, i) => (
+                <span key={i} className="text-xs font-medium bg-blue-50 text-blue-700 px-2 py-0.5 rounded-lg border border-blue-100 truncate max-w-[180px]">{n}</span>
               ))}
+              {extraCount > 0 && (
+                <span className="text-xs font-medium bg-gray-100 text-gray-500 px-2 py-0.5 rounded-lg border border-gray-200">+{extraCount}</span>
+              )}
             </div>
             <span className="text-xs text-gray-500 font-medium">{rental.renter_name}</span>
           </div>
@@ -197,8 +207,8 @@ export function RentalManager({ rentals: initialRentals, equipment, currentUser 
           </div>
         </td>
         <td className="px-4 py-3">
-          <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full ${statusBadge[rental.status]}`}>
-            {statusLabel[rental.status]}
+          <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full ${statusBadge[displayStatus]}`}>
+            {statusLabel[displayStatus]}
           </span>
         </td>
         <td className="px-4 py-3">
@@ -246,20 +256,42 @@ export function RentalManager({ rentals: initialRentals, equipment, currentUser 
         </button>
       </div>
 
+      {overdueRentals.length > 0 && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex items-start gap-3">
+          <svg className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          </svg>
+          <div>
+            <p className="text-sm font-bold text-rose-700">返却期限超過 {overdueRentals.length}件</p>
+            <p className="text-xs text-rose-600 mt-0.5">
+              {overdueRentals.map(r => {
+                const names = r.rental_equipment?.map(re => re.equipment?.name ?? '').filter(Boolean).join('・') ?? ''
+                return `${r.renter_name}（${names}）`
+              }).join('、')}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Active rentals table */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2">
           <h3 className="font-bold text-gray-800">貸出中・予約済み</h3>
+          {overdueRentals.length > 0 && (
+            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-rose-500 text-white text-[10px] font-bold">
+              {overdueRentals.length}
+            </span>
+          )}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50/50">
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">貸出機材/担当</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">撮影日/期間</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">撮影内容&返却場所</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">状態</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">操作</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-48 min-w-[160px]">貸出機材/担当</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-40 min-w-[140px]">撮影日/期間</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[140px]">撮影内容&返却場所</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24 min-w-[80px]">状態</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-36 min-w-[120px]">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -287,11 +319,11 @@ export function RentalManager({ rentals: initialRentals, equipment, currentUser 
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50/50">
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">貸出機材/担当</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">撮影日/期間</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">撮影内容&返却場所</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">状態</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">操作</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-48 min-w-[160px]">貸出機材/担当</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-40 min-w-[140px]">撮影日/期間</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[140px]">撮影内容&返却場所</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24 min-w-[80px]">状態</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-36 min-w-[120px]">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -373,9 +405,6 @@ export function RentalManager({ rentals: initialRentals, equipment, currentUser 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   機材を選択（複数可）<span className="text-red-500">*</span>
-                  {!form.start_date || !form.end_date ? (
-                    <span className="text-xs text-gray-400 ml-2">（期間を選択すると空き機材のみ表示）</span>
-                  ) : null}
                 </label>
                 <div className="border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100 max-h-48 overflow-y-auto">
                   {availableEquipment.map(eq => (
@@ -394,7 +423,7 @@ export function RentalManager({ rentals: initialRentals, equipment, currentUser 
                   ))}
                   {availableEquipment.length === 0 && (
                     <div className="px-4 py-6 text-center text-sm text-gray-400">
-                      選択した期間に利用可能な機材がありません
+                      利用可能な機材がありません
                     </div>
                   )}
                 </div>
@@ -405,16 +434,19 @@ export function RentalManager({ rentals: initialRentals, equipment, currentUser 
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  担当者名<span className="text-red-500">*</span>
+                  担当者<span className="text-red-500">*</span>
                 </label>
-                <input
+                <select
                   required
-                  type="text"
                   value={form.renter_name}
                   onChange={e => setForm(f => ({ ...f, renter_name: e.target.value }))}
-                  placeholder="担当者名を入力"
-                  className="block w-full rounded-xl border border-gray-200 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                  className="block w-full rounded-xl border border-gray-200 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                >
+                  <option value="">担当者を選択</option>
+                  {staffMembers.map(m => (
+                    <option key={m.id} value={m.name}>{m.name}</option>
+                  ))}
+                </select>
               </div>
 
               <div>

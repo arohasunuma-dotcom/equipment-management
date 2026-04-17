@@ -16,6 +16,7 @@ export function EquipmentManager({ equipment: initialEquipment, isAdmin }: Props
   const [formData, setFormData] = useState({ name: '', image_url: '', notes: '' })
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [uploading, setUploading] = useState(false)
 
   const activeItems = equipment.filter(e => e.is_active)
   const deletedItems = equipment.filter(e => !e.is_active)
@@ -33,12 +34,23 @@ export function EquipmentManager({ equipment: initialEquipment, isAdmin }: Props
     setError(null)
   }
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onloadend = () => setFormData(f => ({ ...f, image_url: reader.result as string }))
-    reader.readAsDataURL(file)
+    setUploading(true)
+    setError(null)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/equipment/upload', { method: 'POST', body: fd })
+      const json = await res.json()
+      if (json.error) { setError(json.error); return }
+      setFormData(f => ({ ...f, image_url: json.url }))
+    } catch {
+      setError('画像のアップロードに失敗しました')
+    } finally {
+      setUploading(false)
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -150,8 +162,8 @@ export function EquipmentManager({ equipment: initialEquipment, isAdmin }: Props
                     <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                   </div>
                 )}
-                <button type="button" onClick={() => fileInputRef.current?.click()} className="text-sm font-medium text-blue-600 hover:text-blue-700 underline">
-                  写真をアップロード
+                <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading} className="text-sm font-medium text-blue-600 hover:text-blue-700 underline disabled:opacity-50">
+                  {uploading ? 'アップロード中...' : '写真をアップロード'}
                 </button>
                 <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept="image/*" />
               </div>

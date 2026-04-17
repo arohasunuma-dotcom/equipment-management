@@ -120,6 +120,10 @@
   * {
     @apply border-border outline-ring/50;
   }
+  * {
+    font-weight: bold;
+  }
+
   body {
     @apply bg-background text-foreground;
   }

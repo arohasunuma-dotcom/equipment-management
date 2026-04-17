@@ -6,7 +6,7 @@ import { Toaster } from "@/components/ui/sonner";
 const geist = Geist({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "機材管理システム",
+  title: "動画TM案件管理",
   description: "社内撮影機材の貸出管理システム",
 };
 

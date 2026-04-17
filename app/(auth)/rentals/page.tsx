@@ -18,5 +18,18 @@ export default async function RentalsPage() {
     .eq('is_active', true)
     .order('name')
 
-  return <RentalManager rentals={rentals ?? []} equipment={equipment ?? []} currentUser={username} />
+  const { data: staffMembers } = await supabase
+    .from('staff_members')
+    .select('id, name')
+    .eq('is_active', true)
+    .order('name')
+
+  return (
+    <RentalManager
+      rentals={rentals ?? []}
+      equipment={equipment ?? []}
+      currentUser={username}
+      staffMembers={staffMembers ?? []}
+    />
+  )
 }
