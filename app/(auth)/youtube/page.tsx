@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
 import type { YoutubeAccount, YoutubeSchedule, YoutubeOutsourcerEntry } from '@/types/projects'
 
 interface StaffMember {
@@ -53,6 +54,9 @@ function formatMonthLabel(monthStr: string): string {
 }
 
 export default function YouTubePage() {
+  const searchParams = useSearchParams()
+  const initialAccountId = searchParams.get('account_id')
+
   const [accounts, setAccounts] = useState<YoutubeAccount[]>([])
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null)
   const [schedules, setSchedules] = useState<YoutubeSchedule[]>([])
@@ -71,7 +75,11 @@ export default function YouTubePage() {
       .then((json) => {
         const list: YoutubeAccount[] = json.data ?? []
         setAccounts(list)
-        if (list.length > 0) setActiveAccountId(list[0].id)
+        if (initialAccountId && list.find((a) => a.id === initialAccountId)) {
+          setActiveAccountId(initialAccountId)
+        } else if (list.length > 0) {
+          setActiveAccountId(list[0].id)
+        }
       })
       .finally(() => setLoadingAccounts(false))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps

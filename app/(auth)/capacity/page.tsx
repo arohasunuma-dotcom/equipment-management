@@ -8,7 +8,7 @@ interface MemberCapacity {
   name: string
   editingCount: number
   shootingCount: number
-  youtubeCount: number
+  youtubeAccounts: { id: string; channel_name: string }[]
   projectTitles: { id: string; title: string; workType?: WorkType }[]
 }
 
@@ -18,7 +18,7 @@ export default async function CapacityPage() {
   const [
     { data: allStaff },
     { data: projects, error },
-    { data: youtubeSchedules },
+    { data: youtubeAccounts },
   ] = await Promise.all([
     supabase.from('staff_members').select('id, name').eq('is_active', true).order('name'),
     supabase
@@ -27,9 +27,9 @@ export default async function CapacityPage() {
       .not('status', 'in', '("completed","cancelled")')
       .is('deleted_at', null),
     supabase
-      .from('youtube_schedules')
-      .select('member_id')
-      .not('status', 'eq', 'posted'),
+      .from('youtube_accounts')
+      .select('id, channel_name, member_id')
+      .not('member_id', 'is', null),
   ])
 
   if (error) {
@@ -48,15 +48,15 @@ export default async function CapacityPage() {
       name: s.name,
       editingCount: 0,
       shootingCount: 0,
-      youtubeCount: 0,
+      youtubeAccounts: [],
       projectTitles: [],
     })
   }
 
-  // YouTube件数をカウント
-  for (const ys of youtubeSchedules ?? []) {
-    if (ys.member_id && capacityMap.has(ys.member_id)) {
-      capacityMap.get(ys.member_id)!.youtubeCount++
+  // YouTube担当アカウントを紐付け
+  for (const ya of youtubeAccounts ?? []) {
+    if (ya.member_id && capacityMap.has(ya.member_id)) {
+      capacityMap.get(ya.member_id)!.youtubeAccounts.push({ id: ya.id, channel_name: ya.channel_name })
     }
   }
 
@@ -95,8 +95,8 @@ export default async function CapacityPage() {
   }
 
   const capacities = Array.from(capacityMap.values()).sort((a, b) => {
-    const totalA = a.editingCount + a.shootingCount + a.youtubeCount
-    const totalB = b.editingCount + b.shootingCount + b.youtubeCount
+    const totalA = a.editingCount + a.shootingCount + a.youtubeAccounts.length
+    const totalB = b.editingCount + b.shootingCount + b.youtubeAccounts.length
     return totalB - totalA
   })
 
@@ -111,7 +111,7 @@ export default async function CapacityPage() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {capacities.map((mc) => {
-          const total = mc.editingCount + mc.shootingCount + mc.youtubeCount
+          const total = mc.editingCount + mc.shootingCount + mc.youtubeAccounts.length
           const colorClass =
             total >= 5 ? 'border-red-200 bg-red-50'
             : total >= 3 ? 'border-yellow-200 bg-yellow-50'
@@ -137,7 +137,7 @@ export default async function CapacityPage() {
                 </span>
               </div>
 
-              {/* 担当内訳 */}
+              {/* 担当内訳バッジ */}
               <div className="flex flex-wrap gap-2">
                 {mc.editingCount > 0 && (
                   <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
@@ -149,9 +149,9 @@ export default async function CapacityPage() {
                     撮影 {mc.shootingCount}件
                   </span>
                 )}
-                {mc.youtubeCount > 0 && (
+                {mc.youtubeAccounts.length > 0 && (
                   <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">
-                    YouTube {mc.youtubeCount}件
+                    YouTube {mc.youtubeAccounts.length}件
                   </span>
                 )}
                 {total === 0 && (
@@ -159,8 +159,8 @@ export default async function CapacityPage() {
                 )}
               </div>
 
-              {/* 担当案件リスト */}
-              {mc.projectTitles.length > 0 && (
+              {/* 担当案件リスト + YouTubeアカウント */}
+              {(mc.projectTitles.length > 0 || mc.youtubeAccounts.length > 0) && (
                 <ul className="space-y-1.5">
                   {mc.projectTitles.map((p) => (
                     <li key={p.id} className="flex items-center gap-2">
@@ -174,6 +174,17 @@ export default async function CapacityPage() {
                         className="text-xs text-gray-700 hover:text-blue-600 truncate transition-colors"
                       >
                         {p.title}
+                      </a>
+                    </li>
+                  ))}
+                  {mc.youtubeAccounts.map((ya) => (
+                    <li key={ya.id} className="flex items-center gap-2">
+                      <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-red-400" />
+                      <a
+                        href={`/youtube?account_id=${ya.id}`}
+                        className="text-xs text-gray-700 hover:text-red-600 truncate transition-colors"
+                      >
+                        {ya.channel_name}
                       </a>
                     </li>
                   ))}
