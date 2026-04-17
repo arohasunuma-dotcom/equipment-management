@@ -8,6 +8,7 @@ const updateSchema = z.object({
   contact_name: z.string().max(100).optional().nullable(),
   notes: z.string().max(500).optional().nullable(),
   member_id: z.string().uuid().optional().nullable(),
+  spreadsheet_url: z.string().url('URLの形式が不正です').optional().nullable().or(z.literal('')),
 })
 
 export async function PATCH(

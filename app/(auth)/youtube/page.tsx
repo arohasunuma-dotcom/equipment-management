@@ -294,12 +294,21 @@ export default function YouTubePage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
             </button>
-            <button
-              onClick={() => setActiveMonth(getMonthStr(new Date()))}
-              className="text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-lg px-2 py-1 hover:bg-gray-50 transition-colors"
-            >
-              今月
-            </button>
+            {/* スプレッドシートリンク */}
+            {accounts.find((a) => a.id === activeAccountId)?.spreadsheet_url && (
+              <a
+                href={accounts.find((a) => a.id === activeAccountId)!.spreadsheet_url!}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs text-emerald-700 hover:text-emerald-900 border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 rounded-lg px-2.5 py-1 transition-colors"
+                title="スプレッドシートを開く"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+                </svg>
+                スプシ
+              </a>
+            )}
           </div>
 
           {loadingSchedules ? (
@@ -749,6 +758,7 @@ function AddAccountModal({
   const [channelId, setChannelId] = useState('')
   const [notes, setNotes] = useState('')
   const [memberId, setMemberId] = useState('')
+  const [spreadsheetUrl, setSpreadsheetUrl] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -765,6 +775,7 @@ function AddAccountModal({
           channel_id: channelId || channelName,
           notes: notes || null,
           member_id: memberId || null,
+          spreadsheet_url: spreadsheetUrl || null,
         }),
       })
       const json = await res.json()
@@ -841,6 +852,17 @@ function AddAccountModal({
           </div>
 
           <div>
+            <label className="text-xs text-gray-600 mb-1 block">スプレッドシートURL</label>
+            <input
+              type="url"
+              value={spreadsheetUrl}
+              onChange={(e) => setSpreadsheetUrl(e.target.value)}
+              placeholder="https://docs.google.com/spreadsheets/..."
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500"
+            />
+          </div>
+
+          <div>
             <label className="text-xs text-gray-600 mb-1 block">備考</label>
             <input
               type="text"
@@ -890,6 +912,7 @@ function EditAccountModal({
   const [channelId, setChannelId] = useState(account.channel_id)
   const [memberId, setMemberId] = useState(account.member_id ?? '')
   const [notes, setNotes] = useState(account.notes ?? '')
+  const [spreadsheetUrl, setSpreadsheetUrl] = useState(account.spreadsheet_url ?? '')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -906,6 +929,7 @@ function EditAccountModal({
           channel_id: channelId || channelName,
           notes: notes || null,
           member_id: memberId || null,
+          spreadsheet_url: spreadsheetUrl || null,
         }),
       })
       const json = await res.json()
@@ -974,6 +998,17 @@ function EditAccountModal({
                 <option key={m.id} value={m.id}>{m.name}</option>
               ))}
             </select>
+          </div>
+
+          <div>
+            <label className="text-xs text-gray-600 mb-1 block">スプレッドシートURL</label>
+            <input
+              type="url"
+              value={spreadsheetUrl}
+              onChange={(e) => setSpreadsheetUrl(e.target.value)}
+              placeholder="https://docs.google.com/spreadsheets/..."
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500"
+            />
           </div>
 
           <div>

@@ -167,6 +167,7 @@ export interface YoutubeAccount {
   notes?: string | null
   member_id?: string | null
   member?: { id: string; name: string } | null
+  spreadsheet_url?: string | null
 }
 
 export type YoutubeVideoLength = 'short' | 'long'
