@@ -2,7 +2,6 @@ import { createAdminClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 
 interface CalendarItem {
-  kind: 'shooting' | 'batch'
   projectId: string
   projectTitle: string
   clientName: string | null
@@ -37,13 +36,12 @@ export default async function ProjectCalendarPage({ searchParams }: PageProps) {
   const now = new Date()
 
   const year  = parseInt(params.year  ?? String(now.getFullYear()), 10)
-  const monthNum = parseInt(params.month ?? String(now.getMonth() + 1), 10) // 1-indexed
-  const month = monthNum - 1 // 0-indexed for Date
+  const monthNum = parseInt(params.month ?? String(now.getMonth() + 1), 10)
+  const month = monthNum - 1
 
   const firstOfMonth = `${year}-${String(monthNum).padStart(2, '0')}-01`
   const lastOfMonth  = `${year}-${String(monthNum).padStart(2, '0')}-${new Date(year, month + 1, 0).getDate()}`
 
-  // 前月・次月のパラメータ
   const prevDate  = new Date(year, month - 1, 1)
   const nextDate  = new Date(year, month + 1, 1)
   const prevHref  = `?year=${prevDate.getFullYear()}&month=${prevDate.getMonth() + 1}`
@@ -53,11 +51,10 @@ export default async function ProjectCalendarPage({ searchParams }: PageProps) {
 
   const [
     { data: shootingProjects },
-    { data: batches },
     { data: batchShootings },
     { data: shootingDateTasks },
   ] = await Promise.all([
-    // 1. 撮影のみ案件（shooting_date ベース）
+    // 1. 撮影のみ案件（projects.shooting_date）
     supabase
       .from('projects')
       .select('id, title, work_type, shooting_date, client:clients(id, name, areas)')
@@ -68,16 +65,7 @@ export default async function ProjectCalendarPage({ searchParams }: PageProps) {
       .lte('shooting_date', lastOfMonth)
       .order('shooting_date', { ascending: true }),
 
-    // 2. 編集あり案件のタスクバッチ（due_date ベース）
-    supabase
-      .from('task_batches')
-      .select('id, name, due_date, shooting_date, project:projects!project_id(id, title, work_type, status, deleted_at, client:clients(id, name, areas))')
-      .not('due_date', 'is', null)
-      .gte('due_date', firstOfMonth)
-      .lte('due_date', lastOfMonth)
-      .order('due_date', { ascending: true }),
-
-    // 3. タスクバッチ単位の撮影日（batch.shooting_date）
+    // 2. 撮影＋編集案件のバッチ撮影日（task_batches.shooting_date）
     supabase
       .from('task_batches')
       .select('id, name, shooting_date, project:projects!project_id(id, title, work_type, status, deleted_at, client:clients(id, name, areas))')
@@ -86,17 +74,16 @@ export default async function ProjectCalendarPage({ searchParams }: PageProps) {
       .lte('shooting_date', lastOfMonth)
       .order('shooting_date', { ascending: true }),
 
-    // 4. 撮影＋編集案件の「撮影日」タスク（step_order=4, due_date ベース）
+    // 3. 「撮影日」タスクの due_date（batch.shooting_date 未設定の場合のフォールバック）
     supabase
       .from('tasks')
-      .select('id, due_date, project:projects!project_id(id, title, work_type, status, deleted_at, client:clients(id, name, areas))')
+      .select('id, due_date, batch_id, project:projects!project_id(id, title, work_type, status, deleted_at, client:clients(id, name, areas))')
       .eq('title', '撮影日')
       .not('due_date', 'is', null)
       .gte('due_date', firstOfMonth)
       .lte('due_date', lastOfMonth),
   ])
 
-  // カレンダーアイテムに統合
   const dayItemsMap = new Map<string, CalendarItem[]>()
   const addItem = (date: string, item: CalendarItem) => {
     if (!dayItemsMap.has(date)) dayItemsMap.set(date, [])
@@ -116,48 +103,36 @@ export default async function ProjectCalendarPage({ searchParams }: PageProps) {
   const resolveRawProject = (raw: RawProjectRef | RawProjectRef[] | null): RawProjectRef | null =>
     Array.isArray(raw) ? raw[0] ?? null : raw
 
-  // 1. 撮影のみ案件
+  // 1. 撮影のみ案件の撮影日
   for (const p of (shootingProjects ?? []) as { id: string; title: string; shooting_date: string | null; client: RawClient }[]) {
     if (!p.shooting_date) continue
     const { clientName, areaText } = resolveClient(p.client)
-    addItem(p.shooting_date, { kind: 'shooting', projectId: p.id, projectTitle: p.title, clientName, areaText, date: p.shooting_date })
+    addItem(p.shooting_date, { projectId: p.id, projectTitle: p.title, clientName, areaText, date: p.shooting_date })
   }
 
-  // 2. タスクバッチ納品日
-  type RawBatch = { id: string; name: string; due_date: string; shooting_date?: string | null; project: RawProjectRef | RawProjectRef[] | null }
-  for (const b of (batches ?? []) as unknown as RawBatch[]) {
-    if (!b.due_date) continue
-    const rawProject = resolveRawProject(b.project)
-    if (!rawProject || rawProject.status === 'cancelled' || rawProject.deleted_at != null) continue
-    if (rawProject.work_type === 'shooting_only') continue
-    const { clientName, areaText } = resolveClient(rawProject.client)
-    addItem(b.due_date, { kind: 'batch', projectId: rawProject.id, projectTitle: rawProject.title, clientName, areaText, batchName: b.name, date: b.due_date })
-  }
-
-  // 3. バッチ単位の撮影日（shooting_date フィールド）
+  // 2. バッチ単位の撮影日（batch.shooting_date）
+  // batch_idをセットとして記録し、タスクフォールバックの重複を防ぐ
+  const batchIdsWithShootingDate = new Set<string>()
   type RawBatchShooting = { id: string; name: string; shooting_date: string | null; project: RawProjectRef | RawProjectRef[] | null }
   for (const b of (batchShootings ?? []) as unknown as RawBatchShooting[]) {
     if (!b.shooting_date) continue
     const rawProject = resolveRawProject(b.project)
     if (!rawProject || rawProject.status === 'cancelled' || rawProject.deleted_at != null) continue
-    if (rawProject.work_type !== 'shooting_and_editing') continue
+    batchIdsWithShootingDate.add(b.id)
     const { clientName, areaText } = resolveClient(rawProject.client)
-    addItem(b.shooting_date, { kind: 'shooting', projectId: rawProject.id, projectTitle: rawProject.title, clientName, areaText, batchName: b.name, date: b.shooting_date })
+    addItem(b.shooting_date, { projectId: rawProject.id, projectTitle: rawProject.title, clientName, areaText, batchName: b.name, date: b.shooting_date })
   }
 
-  // 4. 撮影＋編集案件の「撮影日」タスク due_date
-  type RawTaskRow = { id: string; due_date: string | null; project: RawProjectRef | RawProjectRef[] | null }
+  // 3. 「撮影日」タスクの due_date（batch.shooting_date が未設定のバッチのフォールバック）
+  type RawTaskRow = { id: string; due_date: string | null; batch_id: string | null; project: RawProjectRef | RawProjectRef[] | null }
   for (const t of (shootingDateTasks ?? []) as unknown as RawTaskRow[]) {
     if (!t.due_date) continue
+    // すでに batch.shooting_date で登録済みのバッチはスキップ
+    if (t.batch_id && batchIdsWithShootingDate.has(t.batch_id)) continue
     const rawProject = resolveRawProject(t.project)
     if (!rawProject || rawProject.status === 'cancelled' || rawProject.deleted_at != null) continue
-    if (rawProject.work_type !== 'shooting_and_editing') continue
     const { clientName, areaText } = resolveClient(rawProject.client)
-    // 重複を避けるため既存の同プロジェクト撮影イベントをチェック
-    const existing = dayItemsMap.get(t.due_date) ?? []
-    const alreadyAdded = existing.some((i) => i.kind === 'shooting' && i.projectId === rawProject.id)
-    if (alreadyAdded) continue
-    addItem(t.due_date, { kind: 'shooting', projectId: rawProject.id, projectTitle: rawProject.title, clientName, areaText, date: t.due_date })
+    addItem(t.due_date, { projectId: rawProject.id, projectTitle: rawProject.title, clientName, areaText, date: t.due_date })
   }
 
   const weeks = buildCalendar(year, month)
@@ -171,10 +146,6 @@ export default async function ProjectCalendarPage({ searchParams }: PageProps) {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">撮影カレンダー</h1>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs text-gray-500">
-            <span className="inline-block w-2.5 h-2.5 rounded-full bg-blue-500" />撮影
-            <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 ml-2" />納品
-          </div>
           {/* 月ナビゲーション */}
           <div className="flex items-center gap-1">
             <Link
@@ -234,32 +205,25 @@ export default async function ProjectCalendarPage({ searchParams }: PageProps) {
                     {date.getDate()}
                   </div>
                   <div className="space-y-1">
-                    {items.slice(0, 2).map((item, i) => {
-                      const isBatch = item.kind === 'batch'
-                      return (
-                        <a
-                          key={i}
-                          href={`/projects/${item.projectId}`}
-                          className={`block rounded px-1.5 py-1 transition-colors ${
-                            isBatch
-                              ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
-                              : 'bg-blue-500 hover:bg-blue-600 text-white'
-                          }`}
-                          title={[item.clientName, item.areaText, item.projectTitle, item.batchName].filter(Boolean).join(' / ')}
-                        >
-                          {item.clientName && (
-                            <p className="text-[9px] font-semibold leading-tight truncate opacity-90">
-                              {item.clientName}
-                              {item.areaText && <span className="opacity-75">　{item.areaText}</span>}
-                            </p>
-                          )}
-                          <p className="text-[10px] leading-tight truncate">{item.projectTitle}</p>
-                          {item.batchName && (
-                            <p className="text-[9px] leading-tight truncate opacity-80">{item.batchName}</p>
-                          )}
-                        </a>
-                      )
-                    })}
+                    {items.slice(0, 2).map((item, i) => (
+                      <a
+                        key={i}
+                        href={`/projects/${item.projectId}`}
+                        className="block rounded px-1.5 py-1 bg-blue-500 hover:bg-blue-600 text-white transition-colors"
+                        title={[item.clientName, item.areaText, item.projectTitle, item.batchName].filter(Boolean).join(' / ')}
+                      >
+                        {item.clientName && (
+                          <p className="text-[9px] font-semibold leading-tight truncate opacity-90">
+                            {item.clientName}
+                            {item.areaText && <span className="opacity-75">　{item.areaText}</span>}
+                          </p>
+                        )}
+                        <p className="text-[10px] leading-tight truncate">{item.projectTitle}</p>
+                        {item.batchName && (
+                          <p className="text-[9px] leading-tight truncate opacity-80">{item.batchName}</p>
+                        )}
+                      </a>
+                    ))}
                     {items.length > 2 && (
                       <p className="text-[10px] text-gray-400 pl-1">+{items.length - 2}件</p>
                     )}
@@ -270,10 +234,6 @@ export default async function ProjectCalendarPage({ searchParams }: PageProps) {
           </div>
         ))}
       </div>
-
-      <p className="text-xs text-gray-400 text-right">
-        青: 撮影日　緑: タスク締日（編集あり案件）
-      </p>
     </div>
   )
 }
