@@ -28,7 +28,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
   // 3. YouTubeスケジュール外注（納品済み以降）
   const { data: ytRows, error: e3 } = await supabase
     .from('youtube_schedules')
-    .select('id, post_date, delivered_at, status, youtube_outsourcers, account:youtube_accounts!youtube_account_id(id, channel_name)')
+    .select('id, post_date, delivered_at, milestones, status, youtube_outsourcers, account:youtube_accounts!youtube_account_id(id, channel_name)')
     .in('status', ['delivered', 'reserved', 'posted'])
     .not('youtube_outsourcers', 'is', null)
     .order('post_date', { ascending: false })
@@ -38,6 +38,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
   // 統一形式にまとめて返す
   type RowProject = { id: string; title: string; work_type: string; status: string; deleted_at: string | null; shooting_date?: string | null; delivery_date?: string | null }
   type YtOutsourcerEntry = { outsourcer_id: string; name: string; amount: number }
+  type MilestoneEntry = { date?: string | null; done?: boolean }
   type YtAccount = { id: string; channel_name: string } | null
   type ResultItem = {
     id: string; kind: 'project' | 'batch' | 'youtube'; batch_name?: string
@@ -65,12 +66,15 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
     const entry = entries.find((e) => e.outsourcer_id === id)
     if (!entry || entry.amount <= 0) continue
     const account = resolveAccount(row.account)
+    // 納品日マイルストーンを優先、なければ delivered_at
+    const milestones = (row.milestones ?? {}) as Record<string, MilestoneEntry>
+    const deliveryDate = milestones['delivery']?.date ?? null
     ytItems.push({
       id: row.id,
       kind: 'youtube' as const,
       amount: entry.amount,
-      delivered_at: row.delivered_at,
-      created_at: row.delivered_at ?? row.post_date ?? '',
+      delivered_at: deliveryDate ?? row.delivered_at,
+      created_at: deliveryDate ?? row.delivered_at ?? row.post_date ?? '',
       project: null,
       channel_name: account?.channel_name ?? null,
       channel_url: null,

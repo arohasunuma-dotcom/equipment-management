@@ -34,17 +34,13 @@ export async function GET(req: NextRequest) {
   const { data: batchRows, error: e2 } = await q2
   if (e2) return NextResponse.json({ data: null, error: { code: 'INTERNAL_ERROR', message: e2.message } }, { status: 500 })
 
-  // 3. youtube_schedules (YouTube長尺外注) — 納品済み・予約済み・投稿済みを対象
-  let q3 = supabase
+  // 3. youtube_schedules (YouTube長尺外注) — 納品日マイルストーンで絞り込み
+  const { data: ytRows, error: e3 } = await supabase
     .from('youtube_schedules')
-    .select('youtube_outsourcers, delivered_at')
+    .select('youtube_outsourcers, milestones')
     .in('status', ['delivered', 'reserved', 'posted'])
     .eq('video_length', 'long')
     .not('youtube_outsourcers', 'is', null)
-    .not('delivered_at', 'is', null)
-  if (start) q3 = q3.gte('delivered_at', `${start}T00:00:00`)
-  if (end)   q3 = q3.lte('delivered_at', `${end}T23:59:59`)
-  const { data: ytRows, error: e3 } = await q3
   if (e3) return NextResponse.json({ data: null, error: { code: 'INTERNAL_ERROR', message: e3.message } }, { status: 500 })
 
   // 外注者ごとに集計（削除済み案件は除外）
@@ -70,7 +66,16 @@ export async function GET(req: NextRequest) {
     accum(row.outsourcer_id, row.outsourcer, row.outsourcer_amount ?? 0)
   }
   type YtOutsourcerEntry = { outsourcer_id: string; name: string; amount: number }
+  type MilestoneEntry = { date?: string | null; done?: boolean }
+  type Milestones = Record<string, MilestoneEntry>
   for (const row of ytRows ?? []) {
+    // 納品日マイルストーンで月フィルタ
+    const milestones = (row.milestones ?? {}) as Milestones
+    const deliveryDate = milestones['delivery']?.date ?? null
+    if (!deliveryDate) continue
+    if (start && deliveryDate < start) continue
+    if (end   && deliveryDate > end)   continue
+
     const entries = (row.youtube_outsourcers ?? []) as YtOutsourcerEntry[]
     for (const entry of entries) {
       if (!entry.outsourcer_id || entry.amount <= 0) continue
