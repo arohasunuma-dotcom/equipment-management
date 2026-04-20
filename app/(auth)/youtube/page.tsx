@@ -448,7 +448,7 @@ function ScheduleRow({
         </div>
 
         {/* 投稿日 */}
-        <div className="flex-shrink-0 w-28 px-1 py-1.5">
+        <div className="flex-shrink-0 w-36 px-1 py-1.5">
           <input
             type="date"
             defaultValue={schedule.post_date ?? ''}
@@ -738,7 +738,7 @@ function TableHeader() {
     <div className="flex items-center gap-0 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 py-2">
       <div className="flex-shrink-0 w-8" />
       <div className="flex-shrink-0 w-10 text-center">予約</div>
-      <div className="flex-shrink-0 w-28 px-2">投稿日</div>
+      <div className="flex-shrink-0 w-36 px-2">投稿日</div>
       <div className="flex-shrink-0 w-20 px-2">動画尺</div>
       <div className="flex-shrink-0 w-24 px-2">ステータス</div>
       <div className="flex-1 px-2">企画内容</div>
