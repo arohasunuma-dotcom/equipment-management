@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import type { YoutubeAccount, YoutubeSchedule, YoutubeOutsourcerEntry } from '@/types/projects'
 import type { AccountAlert } from '@/app/api/youtube-accounts/alerts/route'
@@ -55,7 +55,7 @@ function formatMonthLabel(monthStr: string): string {
   return `${y}年${parseInt(m)}月`
 }
 
-export default function YouTubePage() {
+function YouTubePageInner() {
   const searchParams = useSearchParams()
   const initialAccountId = searchParams.get('account_id')
 
@@ -1189,4 +1189,8 @@ function EditAccountModal({
       </div>
     </div>
   )
+}
+
+export default function YouTubePage() {
+  return <Suspense><YouTubePageInner /></Suspense>
 }
