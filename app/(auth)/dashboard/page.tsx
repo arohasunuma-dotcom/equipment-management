@@ -77,6 +77,16 @@ export default async function DashboardPage() {
     taskAlertItems.push({ projectId: proj.id, projectTitle: proj.title, taskTitle: t.title as string, dueDate: t.due_date as string, kind })
   }
 
+  // 黄色案件（warning のみ、プロジェクト単位に集約）
+  const warningProjectMap = new Map<string, { id: string; title: string; tasks: { title: string; dueDate: string }[] }>()
+  for (const t of taskAlertItems.filter(t => t.kind === 'warning')) {
+    if (!warningProjectMap.has(t.projectId)) {
+      warningProjectMap.set(t.projectId, { id: t.projectId, title: t.projectTitle, tasks: [] })
+    }
+    warningProjectMap.get(t.projectId)!.tasks.push({ title: t.taskTitle, dueDate: t.dueDate })
+  }
+  const warningProjects = Array.from(warningProjectMap.values())
+
   const allAlertItems = [...ytAlertItems.map(i => ({ ...i, type: 'youtube' as const })), ...taskAlertItems.map(i => ({ ...i, type: 'project' as const }))]
     .sort((a, b) => {
       if (a.kind !== b.kind) return a.kind === 'overdue' ? -1 : 1
@@ -136,14 +146,48 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {/* 期限が迫っている案件 */}
+      {/* 黄色案件一覧 */}
+      {warningProjects.length > 0 && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-2xl overflow-hidden">
+          <div className="px-6 py-4 border-b border-yellow-200 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+            <h3 className="font-bold text-yellow-800">期限が迫っている案件</h3>
+            <span className="ml-auto text-xs text-yellow-600 font-medium">{warningProjects.length}件</span>
+          </div>
+          <div className="divide-y divide-yellow-100">
+            {warningProjects.map((p) => (
+              <Link
+                key={p.id}
+                href={`/projects/${p.id}`}
+                className="flex items-start justify-between gap-4 px-6 py-3 hover:bg-yellow-100 transition-colors"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-gray-800 truncate">{p.title}</p>
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+                    {p.tasks.map((t, i) => (
+                      <span key={i} className="text-xs text-yellow-700">
+                        {t.title} <span className="text-yellow-500">({t.dueDate})</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <svg className="w-4 h-4 text-yellow-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* YouTube・案件タスク 詳細アラートリスト */}
       {allAlertItems.length > 0 && (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2">
             <svg className="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <h3 className="font-bold text-gray-800">期限が迫っている案件</h3>
+            <h3 className="font-bold text-gray-800">アラート詳細</h3>
             <span className="text-xs text-gray-400 font-normal">（2営業日以内・超過含む）</span>
           </div>
           <div className="divide-y divide-gray-50">
