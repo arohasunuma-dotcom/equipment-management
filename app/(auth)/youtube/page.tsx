@@ -489,10 +489,32 @@ function ScheduleRow({
     ? Math.round((doneCount / totalCount) * 100)
     : schedule.post_reserved ? 100 : 0
 
+  // 行レベルのアラート状態（長尺のみ。トグル未展開でも色付け）
+  const rowAlert: 'overdue' | 'warning' | null = (() => {
+    if (!isLong) return null
+    const today = getToday()
+    let hasOverdue = false
+    let hasWarning = false
+    for (const ms of Object.values(milestones as Record<string, { date: string | null; done: boolean }>)) {
+      if (!ms?.date || ms.done) continue
+      if (ms.date < today) hasOverdue = true
+      else if (isWithin2BusinessDays(ms.date, today)) hasWarning = true
+    }
+    if (hasOverdue) return 'overdue'
+    if (hasWarning) return 'warning'
+    return null
+  })()
+
+  const rowBg = rowAlert === 'overdue'
+    ? 'bg-red-50/60 hover:bg-red-50'
+    : rowAlert === 'warning'
+    ? 'bg-yellow-50/60 hover:bg-yellow-50'
+    : 'hover:bg-gray-50'
+
   return (
     <div>
       {/* ─── 行（常に表示） ─── */}
-      <div className="flex items-center gap-0 hover:bg-gray-50 transition-colors">
+      <div className={`flex items-center gap-0 transition-colors ${rowBg}`}>
         {/* 展開ボタン（長尺のみ） */}
         <div className="flex-shrink-0 w-8 self-stretch flex items-center justify-center">
           {isLong ? (
