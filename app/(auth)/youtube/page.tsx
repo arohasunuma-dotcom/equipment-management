@@ -119,6 +119,39 @@ export default function YouTubePage() {
       .finally(() => setLoadingSchedules(false))
   }, [])
 
+  // 月・水・金のショート行を月の最初の12件分だけ作成（ボタンから呼び出す）
+  const handleAutoFillMonWedFriRows = async () => {
+    if (!activeAccountId || !activeMonth) return
+    setFillingRows(true)
+    const [year, monthNum] = activeMonth.split('-').map(Number)
+    const monWedFriDates: string[] = []
+    const daysInMonth = new Date(year, monthNum, 0).getDate()
+    for (let d = 1; d <= daysInMonth && monWedFriDates.length < 12; d++) {
+      const day = new Date(year, monthNum - 1, d).getDay()
+      if (day === 1 || day === 3 || day === 5) {
+        monWedFriDates.push(`${year}-${String(monthNum).padStart(2, '0')}-${String(d).padStart(2, '0')}`)
+      }
+    }
+    const existingDates = new Set(
+      schedules
+        .filter((s) => s.post_date?.startsWith(activeMonth) && s.video_length === 'short')
+        .map((s) => s.post_date)
+    )
+    const toCreate = monWedFriDates.filter((d) => !existingDates.has(d))
+    const created: YoutubeSchedule[] = []
+    for (const post_date of toCreate) {
+      const res = await fetch('/api/youtube-schedules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ youtube_account_id: activeAccountId, post_date, video_length: 'short' }),
+      })
+      const json = await res.json()
+      if (res.ok && json.data) created.push(json.data as YoutubeSchedule)
+    }
+    if (created.length > 0) setSchedules((prev) => [...prev, ...created])
+    setFillingRows(false)
+  }
+
   // 水曜・金曜のショート行を月の最初の8件分だけ作成（ボタンから呼び出す）
   const handleAutoFillShortRows = async () => {
     if (!activeAccountId || !activeMonth) return
@@ -381,12 +414,26 @@ export default function YouTubePage() {
                 onClick={handleAutoFillShortRows}
                 disabled={fillingRows}
                 className="inline-flex items-center gap-1.5 text-xs text-blue-700 hover:text-blue-900 border border-blue-200 bg-blue-50 hover:bg-blue-100 rounded-lg px-2.5 py-1 transition-colors disabled:opacity-50"
-                title={`${formatMonthLabel(activeMonth)}の水・金ショート行を自動入力`}
+                title={`${formatMonthLabel(activeMonth)}の水・金ショート行を自動入力（8件）`}
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                 </svg>
                 {fillingRows ? '作成中...' : '水・金を自動入力'}
+              </button>
+            )}
+            {/* 月・水・金ショート自動入力ボタン */}
+            {activeMonth && (
+              <button
+                onClick={handleAutoFillMonWedFriRows}
+                disabled={fillingRows}
+                className="inline-flex items-center gap-1.5 text-xs text-blue-700 hover:text-blue-900 border border-blue-200 bg-blue-50 hover:bg-blue-100 rounded-lg px-2.5 py-1 transition-colors disabled:opacity-50"
+                title={`${formatMonthLabel(activeMonth)}の月・水・金ショート行を自動入力（12件）`}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                {fillingRows ? '作成中...' : '月・水・金を自動入力'}
               </button>
             )}
           </div>

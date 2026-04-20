@@ -27,7 +27,7 @@ export default async function ProjectDetailPage({ params, searchParams }: PagePr
       .single(),
     supabase
       .from('task_batches')
-      .select('id, name, due_date, outsourcer_id, outsourcer_amount, delivered_at, created_at, outsourcer:outsourcers(id, name, type)')
+      .select('id, name, due_date, shooting_date, shooting_type, format, cameraman_ids, type, editor_member_id, outsourcer_id, outsourcer_amount, delivered_at, created_at, outsourcer:outsourcers(id, name, type)')
       .eq('project_id', id)
       .order('created_at', { ascending: true }),
     supabase

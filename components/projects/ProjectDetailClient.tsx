@@ -229,10 +229,10 @@ function BatchHeader({
     savePatch({ due_date: dueDate || null })
   }
 
-  const handleBatchShootingDateBlur = async () => {
-    if (batchShootingDate === batchShootingDateRef.current) return
-    batchShootingDateRef.current = batchShootingDate
-    const shootingDate = batchShootingDate || null
+  const saveBatchShootingDate = async (value: string) => {
+    if (value === batchShootingDateRef.current) return
+    batchShootingDateRef.current = value
+    const shootingDate = value || null
     const res = await fetch(`/api/projects/${projectId}/task-batches/${batch.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -254,6 +254,12 @@ function BatchHeader({
         )
       }
     }
+  }
+
+  const handleBatchShootingDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value
+    setBatchShootingDate(value)
+    saveBatchShootingDate(value)
   }
 
   const handleOutsourcerChange = (newId: string) => {
@@ -350,8 +356,7 @@ function BatchHeader({
           <input
             type="date"
             value={batchShootingDate}
-            onChange={(e) => setBatchShootingDate(e.target.value)}
-            onBlur={handleBatchShootingDateBlur}
+            onChange={handleBatchShootingDateChange}
             className="text-xs border border-gray-300 rounded px-1.5 py-1 bg-white text-gray-800 focus:outline-none focus:ring-1 focus:ring-blue-500 flex-1"
           />
         </div>

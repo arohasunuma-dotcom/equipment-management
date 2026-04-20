@@ -2,7 +2,25 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { StatusBadge } from '@/components/projects/StatusBadge'
 import { ProjectStatus } from '@/types/projects'
 import Link from 'next/link'
-import { getToday, addBusinessDays } from '@/lib/businessDays'
+import { getToday, addBusinessDays, isWithin2BusinessDays } from '@/lib/businessDays'
+
+const YT_MILESTONE_LABELS: Record<string, string> = {
+  script_draft: '撮影台本初稿',
+  script_fb: '台本FB',
+  script_client: '台本先方提出',
+  shooting: '撮影日',
+  footage_share: '撮影素材共有',
+  internal_draft: '社内初稿',
+  internal_fb: '社内FB',
+  client_first_draft: '先方初稿提出',
+  client_fb: '先方FB',
+  internal_v2: '社内第２稿',
+  client_revision: '修正稿提出',
+  client_final: '先方最終確認',
+  owner_check: 'お施主様チェック',
+  delivery: '納品日',
+  thumbnail: 'サムネ作成日',
+}
 
 function getWeekRange(): { start: string; end: string } {
   const today = new Date()
@@ -24,7 +42,7 @@ export default async function ProjectDashboardPage() {
   const warningCutoff = addBusinessDays(todayStr, 2)
   const twoDaysLaterStr = warningCutoff // 撮影準備チェック用（後方互換）
 
-  const [thisWeekResult, shootingDelayedResult, overdueTasksResult, warningTasksResult] = await Promise.all([
+  const [thisWeekResult, shootingDelayedResult, overdueTasksResult, warningTasksResult, youtubeSchedulesResult] = await Promise.all([
     supabase
       .from('projects')
       .select('id, title, shooting_date, status, client:clients(name), assigned_editor:users!assigned_editor_id(name)')
@@ -33,11 +51,11 @@ export default async function ProjectDashboardPage() {
       .is('deleted_at', null)
       .order('shooting_date', { ascending: true }),
 
-    // 撮影準備遅延（撮影のみ・2日以内）
+    // 撮影準備チェック未完了（撮影あり案件・撮影日が2営業日以内または超過）
     supabase
       .from('projects')
       .select('id, title, shooting_date, work_type, status, kickoff_done, calendar_done, rental_car_done, hotel_done, transport_reservation_done, equipment_reservation_done, client:clients(name)')
-      .eq('work_type', 'shooting_only')
+      .in('work_type', ['shooting_only', 'shooting_and_editing'])
       .eq('status', 'shooting_scheduled')
       .lte('shooting_date', twoDaysLaterStr)
       .is('deleted_at', null),
@@ -58,13 +76,27 @@ export default async function ProjectDashboardPage() {
       .lte('due_date', warningCutoff)
       .not('status', 'in', '("done","skipped")')
       .order('due_date', { ascending: true }),
+
+    // YouTubeマイルストーン（長尺・未投稿）
+    supabase
+      .from('youtube_schedules')
+      .select('id, content_type, post_date, milestones, youtube_account_id, account:youtube_accounts!youtube_account_id(id, channel_name)')
+      .not('status', 'eq', 'posted')
+      .eq('video_length', 'long')
+      .not('milestones', 'is', null),
   ])
 
   const thisWeekProjects = thisWeekResult.data ?? []
 
-  // 撮影準備遅延（チェックリスト未完了のもの）
-  const shootingDelayedProjects = (shootingDelayedResult.data ?? []).filter((p) =>
+  // 撮影準備チェック未完了のものだけ抽出
+  const shootingCheckIncomplete = (shootingDelayedResult.data ?? []).filter((p) =>
     !p.kickoff_done || !p.calendar_done || !p.rental_car_done || !p.hotel_done || !p.transport_reservation_done || !p.equipment_reservation_done
+  )
+  // 撮影日超過（撮影日 < 今日）→ 赤
+  const shootingOverdueProjects = shootingCheckIncomplete.filter((p) => (p.shooting_date ?? '') < todayStr)
+  // 撮影日2営業日以内（今日 ≤ 撮影日 ≤ warningCutoff）→ 黄色
+  const shootingWarningProjects = shootingCheckIncomplete.filter(
+    (p) => (p.shooting_date ?? '') >= todayStr && (p.shooting_date ?? '') <= warningCutoff
   )
 
   // タスク期限超過（削除済み案件を除外し、プロジェクト単位でまとめる）
@@ -94,7 +126,37 @@ export default async function ProjectDashboardPage() {
   }
   const warningProjects = Array.from(warningByProject.values())
 
-  const totalDelayed = shootingDelayedProjects.length + overdueProjects.length
+  // YouTubeマイルストーン超過・警告（アカウント単位でまとめる）
+  type YtScheduleRow = {
+    id: string; content_type: string; post_date: string | null; milestones: Record<string, { date: string | null; done: boolean }> | null
+    youtube_account_id: string
+    account: { id: string; channel_name: string } | null
+  }
+  const ytRows = (youtubeSchedulesResult.data ?? []) as unknown as YtScheduleRow[]
+  const ytOverdueByAccount = new Map<string, { channel_name: string; items: { content_type: string; post_date: string | null; milestone: string; date: string }[] }>()
+  const ytWarningByAccount = new Map<string, { channel_name: string; items: { content_type: string; post_date: string | null; milestone: string; date: string }[] }>()
+
+  for (const row of ytRows) {
+    const account = Array.isArray(row.account) ? (row.account as unknown as { id: string; channel_name: string }[])[0] ?? null : row.account
+    if (!account || !row.milestones) continue
+    const accountId = row.youtube_account_id
+
+    for (const [key, ms] of Object.entries(row.milestones)) {
+      if (!ms?.date || ms.done) continue
+      const item = { content_type: row.content_type, post_date: row.post_date, milestone: key, date: ms.date }
+      if (ms.date < todayStr) {
+        if (!ytOverdueByAccount.has(accountId)) ytOverdueByAccount.set(accountId, { channel_name: account.channel_name, items: [] })
+        ytOverdueByAccount.get(accountId)!.items.push(item)
+      } else if (isWithin2BusinessDays(ms.date, todayStr)) {
+        if (!ytWarningByAccount.has(accountId)) ytWarningByAccount.set(accountId, { channel_name: account.channel_name, items: [] })
+        ytWarningByAccount.get(accountId)!.items.push(item)
+      }
+    }
+  }
+  const ytOverdueAccounts = Array.from(ytOverdueByAccount.entries()).map(([id, v]) => ({ id, ...v }))
+  const ytWarningAccounts = Array.from(ytWarningByAccount.entries()).map(([id, v]) => ({ id, ...v }))
+
+  const totalDelayed = shootingOverdueProjects.length + overdueProjects.length + ytOverdueAccounts.length
 
   return (
     <div className="space-y-8">
@@ -120,8 +182,8 @@ export default async function ProjectDashboardPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {/* 撮影準備遅延 */}
-            {shootingDelayedProjects.map((project) => {
+            {/* 撮影準備超過（撮影日が過ぎているのにチェック未完了） */}
+            {shootingOverdueProjects.map((project) => {
               const client = (project.client as unknown) as { name: string } | null
               const missingItems = [
                 !project.kickoff_done && 'キックオフMTG',
@@ -139,7 +201,7 @@ export default async function ProjectDashboardPage() {
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">撮影準備未完了</span>
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700">撮影準備超過</span>
                       {client && <span className="text-xs text-gray-500">{client.name}</span>}
                     </div>
                     <p className="text-sm font-bold text-gray-900">{project.title}</p>
@@ -177,6 +239,28 @@ export default async function ProjectDashboardPage() {
                 </Link>
               )
             })}
+
+            {/* YouTubeマイルストーン超過 */}
+            {ytOverdueAccounts.map(({ id, channel_name, items }) => (
+              <Link
+                key={`yt-overdue-${id}`}
+                href="/youtube"
+                className="flex items-start gap-4 bg-white p-5 rounded-2xl shadow-sm border-2 border-red-500 hover:border-red-600 hover:shadow-md transition-all"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700">YouTube期限超過</span>
+                    <span className="text-xs text-gray-500">{channel_name}</span>
+                  </div>
+                  <p className="text-sm font-bold text-gray-900">{channel_name}</p>
+                  <p className="text-xs text-red-600 mt-0.5">
+                    {items.slice(0, 3).map((it) => `${YT_MILESTONE_LABELS[it.milestone] ?? it.milestone}（${it.date}）`).join('・')}
+                    {items.length > 3 && ` 他${items.length - 3}件`}
+                  </p>
+                </div>
+                <span className="shrink-0 text-xs font-medium px-2 py-1 rounded-full bg-red-100 text-red-700 mt-1">{items.length}件</span>
+              </Link>
+            ))}
           </div>
         )}
       </section>
@@ -191,16 +275,48 @@ export default async function ProjectDashboardPage() {
           </div>
           <h3 className="text-lg font-bold text-gray-800">
             期限が迫っている案件
-            <span className="ml-2 text-sm font-normal text-gray-500">({warningProjects.length}件)</span>
+            <span className="ml-2 text-sm font-normal text-gray-500">({warningProjects.length + ytWarningAccounts.length + shootingWarningProjects.length}件)</span>
           </h3>
         </div>
 
-        {warningProjects.length === 0 ? (
+        {warningProjects.length === 0 && ytWarningAccounts.length === 0 && shootingWarningProjects.length === 0 ? (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-10 text-center text-gray-400 italic">
             期限が迫っている案件はありません
           </div>
         ) : (
           <div className="space-y-3">
+            {/* 撮影準備未完了（撮影日2営業日以内） */}
+            {shootingWarningProjects.map((project) => {
+              const client = (project.client as unknown) as { name: string } | null
+              const missingItems = [
+                !project.kickoff_done && 'キックオフMTG',
+                !project.calendar_done && 'カレンダー記入',
+                !project.rental_car_done && 'レンタカー',
+                !project.hotel_done && 'ホテル',
+                !project.transport_reservation_done && '飛行機・新幹線',
+                !project.equipment_reservation_done && '機材予約',
+              ].filter(Boolean).join('・')
+              return (
+                <Link
+                  key={project.id}
+                  href={`/projects/${project.id}`}
+                  className="flex items-start gap-4 bg-white p-5 rounded-2xl shadow-sm border-2 border-yellow-400 hover:border-yellow-500 hover:shadow-md transition-all"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">撮影準備未完了</span>
+                      {client && <span className="text-xs text-gray-500">{client.name}</span>}
+                    </div>
+                    <p className="text-sm font-bold text-gray-900">{project.title}</p>
+                    <p className="text-xs text-yellow-700 mt-0.5">未完了: {missingItems}</p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-xs text-gray-500">撮影日</p>
+                    <p className="text-sm font-semibold text-gray-800">{project.shooting_date}</p>
+                  </div>
+                </Link>
+              )
+            })}
             {warningProjects.map(({ project, tasks }) => {
               const client = (project?.client as unknown) as { name: string } | null
               return (
@@ -224,6 +340,28 @@ export default async function ProjectDashboardPage() {
                 </Link>
               )
             })}
+
+            {/* YouTubeマイルストーン警告 */}
+            {ytWarningAccounts.map(({ id, channel_name, items }) => (
+              <Link
+                key={`yt-warning-${id}`}
+                href="/youtube"
+                className="flex items-start gap-4 bg-white p-5 rounded-2xl shadow-sm border-2 border-yellow-400 hover:border-yellow-500 hover:shadow-md transition-all"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">YouTube期限間近</span>
+                    <span className="text-xs text-gray-500">{channel_name}</span>
+                  </div>
+                  <p className="text-sm font-bold text-gray-900">{channel_name}</p>
+                  <p className="text-xs text-yellow-700 mt-0.5">
+                    {items.slice(0, 3).map((it) => `${YT_MILESTONE_LABELS[it.milestone] ?? it.milestone}（${it.date}）`).join('・')}
+                    {items.length > 3 && ` 他${items.length - 3}件`}
+                  </p>
+                </div>
+                <span className="shrink-0 text-xs font-medium px-2 py-1 rounded-full bg-yellow-100 text-yellow-700 mt-1">{items.length}件</span>
+              </Link>
+            ))}
           </div>
         )}
       </section>
