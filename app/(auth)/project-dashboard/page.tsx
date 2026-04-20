@@ -2,6 +2,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { StatusBadge } from '@/components/projects/StatusBadge'
 import { ProjectStatus } from '@/types/projects'
 import Link from 'next/link'
+import { getToday, addBusinessDays } from '@/lib/businessDays'
 
 function getWeekRange(): { start: string; end: string } {
   const today = new Date()
@@ -19,14 +20,11 @@ function getWeekRange(): { start: string; end: string } {
 export default async function ProjectDashboardPage() {
   const supabase = await createAdminClient()
 
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const todayStr = today.toISOString().split('T')[0]
-  const twoDaysLater = new Date(today)
-  twoDaysLater.setDate(today.getDate() + 2)
-  const twoDaysLaterStr = twoDaysLater.toISOString().split('T')[0]
+  const todayStr = getToday()
+  const warningCutoff = addBusinessDays(todayStr, 2)
+  const twoDaysLaterStr = warningCutoff // 撮影準備チェック用（後方互換）
 
-  const [thisWeekResult, shootingDelayedResult, overdueTasksResult] = await Promise.all([
+  const [thisWeekResult, shootingDelayedResult, overdueTasksResult, warningTasksResult] = await Promise.all([
     supabase
       .from('projects')
       .select('id, title, shooting_date, status, client:clients(name), assigned_editor:users!assigned_editor_id(name)')
@@ -49,6 +47,15 @@ export default async function ProjectDashboardPage() {
       .from('tasks')
       .select('id, title, due_date, project:projects!project_id(id, title, work_type, status, deleted_at, client:clients(name))')
       .lt('due_date', todayStr)
+      .not('status', 'in', '("done","skipped")')
+      .order('due_date', { ascending: true }),
+
+    // タスク期限が迫っている（2営業日以内・今日以降）
+    supabase
+      .from('tasks')
+      .select('id, title, due_date, project:projects!project_id(id, title, work_type, status, deleted_at, client:clients(name))')
+      .gte('due_date', todayStr)
+      .lte('due_date', warningCutoff)
       .not('status', 'in', '("done","skipped")')
       .order('due_date', { ascending: true }),
   ])
@@ -74,6 +81,18 @@ export default async function ProjectDashboardPage() {
     overdueByProject.get(proj.id)!.tasks.push({ title: row.title, due_date: row.due_date })
   }
   const overdueProjects = Array.from(overdueByProject.values())
+
+  // 期限が迫っている案件（2営業日以内）
+  const warningTaskRows = (warningTasksResult.data ?? []) as unknown as OverdueTaskRow[]
+  const warningByProject = new Map<string, { project: OverdueTaskRow['project']; tasks: { title: string; due_date: string }[] }>()
+  for (const row of warningTaskRows) {
+    const proj = Array.isArray(row.project) ? (row.project as unknown as OverdueTaskRow['project'][])[0] ?? null : row.project
+    if (!proj || proj.deleted_at || proj.work_type === 'shooting_only') continue
+    if (proj.status === 'completed' || proj.status === 'cancelled') continue
+    if (!warningByProject.has(proj.id)) warningByProject.set(proj.id, { project: proj, tasks: [] })
+    warningByProject.get(proj.id)!.tasks.push({ title: row.title, due_date: row.due_date })
+  }
+  const warningProjects = Array.from(warningByProject.values())
 
   const totalDelayed = shootingDelayedProjects.length + overdueProjects.length
 
@@ -150,6 +169,53 @@ export default async function ProjectDashboardPage() {
                     </div>
                     <p className="text-sm font-bold text-gray-900">{project?.title}</p>
                     <p className="text-xs text-red-600 mt-0.5">
+                      {tasks.slice(0, 3).map((t) => `${t.title}（${t.due_date}）`).join('・')}
+                      {tasks.length > 3 && ` 他${tasks.length - 3}件`}
+                    </p>
+                  </div>
+                  <StatusBadge status={project?.status as ProjectStatus} className="shrink-0 mt-1" />
+                </Link>
+              )
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* 期限が迫っている案件 */}
+      <section>
+        <div className="flex items-center gap-3 mb-4">
+          <div className="bg-yellow-400 p-2 rounded-lg">
+            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-bold text-gray-800">
+            期限が迫っている案件
+            <span className="ml-2 text-sm font-normal text-gray-500">({warningProjects.length}件)</span>
+          </h3>
+        </div>
+
+        {warningProjects.length === 0 ? (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-10 text-center text-gray-400 italic">
+            期限が迫っている案件はありません
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {warningProjects.map(({ project, tasks }) => {
+              const client = (project?.client as unknown) as { name: string } | null
+              return (
+                <Link
+                  key={project?.id}
+                  href={`/projects/${project?.id}`}
+                  className="flex items-start gap-4 bg-white p-5 rounded-2xl shadow-sm border-2 border-yellow-400 hover:border-yellow-500 hover:shadow-md transition-all"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">タスク期限間近</span>
+                      {client && <span className="text-xs text-gray-500">{client.name}</span>}
+                    </div>
+                    <p className="text-sm font-bold text-gray-900">{project?.title}</p>
+                    <p className="text-xs text-yellow-700 mt-0.5">
                       {tasks.slice(0, 3).map((t) => `${t.title}（${t.due_date}）`).join('・')}
                       {tasks.length > 3 && ` 他${tasks.length - 3}件`}
                     </p>
