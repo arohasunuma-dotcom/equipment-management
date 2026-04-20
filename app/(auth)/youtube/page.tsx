@@ -506,9 +506,9 @@ function ScheduleRow({
   })()
 
   const rowBg = rowAlert === 'overdue'
-    ? 'bg-red-50/60 hover:bg-red-50'
+    ? 'bg-red-100 hover:bg-red-150'
     : rowAlert === 'warning'
-    ? 'bg-yellow-50/60 hover:bg-yellow-50'
+    ? 'bg-yellow-100 hover:bg-yellow-150'
     : 'hover:bg-gray-50'
 
   return (
