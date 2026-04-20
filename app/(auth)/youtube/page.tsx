@@ -412,6 +412,11 @@ function ScheduleRow({
   const doneCount = MILESTONE_KEYS.filter((m) => milestones[m.key]?.done).length
   const totalCount = MILESTONE_KEYS.length
 
+  // 進捗自動計算: ショート=予約済みなら100%、長尺=done数/全数
+  const autoProgress = isLong
+    ? Math.round((doneCount / totalCount) * 100)
+    : schedule.post_reserved ? 100 : 0
+
   return (
     <div>
       {/* ─── 行（常に表示） ─── */}
@@ -542,17 +547,11 @@ function ScheduleRow({
 
         {/* 進捗 */}
         <div className="flex-shrink-0 w-16 px-1 py-1.5 flex items-center gap-0.5">
-          <input
-            type="number"
-            min={0}
-            max={100}
-            defaultValue={schedule.progress}
-            onBlur={(e) => {
-              const val = Math.min(100, Math.max(0, parseInt(e.target.value || '0', 10)))
-              if (val !== schedule.progress) onUpdate(schedule.id, { progress: val })
-            }}
-            className="w-10 text-xs bg-transparent border border-transparent hover:border-gray-200 focus:border-blue-400 rounded px-1 py-0.5 focus:outline-none focus:bg-white text-center"
-          />
+          <span className={`text-xs font-medium ${
+            autoProgress === 100 ? 'text-green-600' : autoProgress > 0 ? 'text-blue-600' : 'text-gray-400'
+          }`}>
+            {autoProgress}
+          </span>
           <span className="text-xs text-gray-400">%</span>
         </div>
 
