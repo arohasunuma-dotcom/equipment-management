@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
 import type { YoutubeAccount, YoutubeSchedule, YoutubeOutsourcerEntry } from '@/types/projects'
 
@@ -68,8 +68,7 @@ export default function YouTubePage() {
   const [editingAccount, setEditingAccount] = useState<YoutubeAccount | null>(null)
   const [addingRow, setAddingRow] = useState(false)
   const [activeMonth, setActiveMonth] = useState<string | null>(getMonthStr(new Date()))
-  // 月×アカウントごとに自動作成済みかどうかを記録（ページ内で重複作成しない）
-  const autoCreatedKeys = useRef(new Set<string>())
+  const [fillingRows, setFillingRows] = useState(false)
 
   useEffect(() => {
     fetch('/api/youtube-accounts')
@@ -103,13 +102,10 @@ export default function YouTubePage() {
       .finally(() => setLoadingSchedules(false))
   }, [])
 
-  // 水曜・金曜のショート行を月の最初の8件分だけ自動作成
-  useEffect(() => {
-    if (!activeAccountId || !activeMonth || loadingSchedules) return
-    const key = `${activeAccountId}:${activeMonth}`
-    if (autoCreatedKeys.current.has(key)) return
-    autoCreatedKeys.current.add(key)
-
+  // 水曜・金曜のショート行を月の最初の8件分だけ作成（ボタンから呼び出す）
+  const handleAutoFillShortRows = async () => {
+    if (!activeAccountId || !activeMonth) return
+    setFillingRows(true)
     const [year, monthNum] = activeMonth.split('-').map(Number)
     const wedFriDates: string[] = []
     const daysInMonth = new Date(year, monthNum, 0).getDate()
@@ -119,29 +115,25 @@ export default function YouTubePage() {
         wedFriDates.push(`${year}-${String(monthNum).padStart(2, '0')}-${String(d).padStart(2, '0')}`)
       }
     }
-
     const existingDates = new Set(
       schedules
         .filter((s) => s.post_date?.startsWith(activeMonth) && s.video_length === 'short')
         .map((s) => s.post_date)
     )
     const toCreate = wedFriDates.filter((d) => !existingDates.has(d))
-    if (toCreate.length === 0) return
-
-    ;(async () => {
-      const created: YoutubeSchedule[] = []
-      for (const post_date of toCreate) {
-        const res = await fetch('/api/youtube-schedules', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ youtube_account_id: activeAccountId, post_date, video_length: 'short' }),
-        })
-        const json = await res.json()
-        if (res.ok && json.data) created.push(json.data as YoutubeSchedule)
-      }
-      if (created.length > 0) setSchedules((prev) => [...prev, ...created])
-    })()
-  }, [activeAccountId, activeMonth, loadingSchedules, schedules]) // eslint-disable-line react-hooks/exhaustive-deps
+    const created: YoutubeSchedule[] = []
+    for (const post_date of toCreate) {
+      const res = await fetch('/api/youtube-schedules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ youtube_account_id: activeAccountId, post_date, video_length: 'short' }),
+      })
+      const json = await res.json()
+      if (res.ok && json.data) created.push(json.data as YoutubeSchedule)
+    }
+    if (created.length > 0) setSchedules((prev) => [...prev, ...created])
+    setFillingRows(false)
+  }
 
   useEffect(() => {
     if (activeAccountId) loadSchedules(activeAccountId)
@@ -358,6 +350,20 @@ export default function YouTubePage() {
                 </svg>
                 スプシ
               </a>
+            )}
+            {/* 水曜・金曜ショート自動入力ボタン */}
+            {activeMonth && (
+              <button
+                onClick={handleAutoFillShortRows}
+                disabled={fillingRows}
+                className="inline-flex items-center gap-1.5 text-xs text-blue-700 hover:text-blue-900 border border-blue-200 bg-blue-50 hover:bg-blue-100 rounded-lg px-2.5 py-1 transition-colors disabled:opacity-50"
+                title={`${formatMonthLabel(activeMonth)}の水・金ショート行を自動入力`}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                {fillingRows ? '作成中...' : '水・金を自動入力'}
+              </button>
             )}
           </div>
 
