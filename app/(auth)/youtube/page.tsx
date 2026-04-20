@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import type { YoutubeAccount, YoutubeSchedule, YoutubeOutsourcerEntry } from '@/types/projects'
 
@@ -68,6 +68,8 @@ export default function YouTubePage() {
   const [editingAccount, setEditingAccount] = useState<YoutubeAccount | null>(null)
   const [addingRow, setAddingRow] = useState(false)
   const [activeMonth, setActiveMonth] = useState<string | null>(getMonthStr(new Date()))
+  // 月×アカウントごとに自動作成済みかどうかを記録（ページ内で重複作成しない）
+  const autoCreatedKeys = useRef(new Set<string>())
 
   useEffect(() => {
     fetch('/api/youtube-accounts')
@@ -100,6 +102,46 @@ export default function YouTubePage() {
       .then((json) => setSchedules(json.data ?? []))
       .finally(() => setLoadingSchedules(false))
   }, [])
+
+  // 水曜・金曜のショート行を月の最初の8件分だけ自動作成
+  useEffect(() => {
+    if (!activeAccountId || !activeMonth || loadingSchedules) return
+    const key = `${activeAccountId}:${activeMonth}`
+    if (autoCreatedKeys.current.has(key)) return
+    autoCreatedKeys.current.add(key)
+
+    const [year, monthNum] = activeMonth.split('-').map(Number)
+    const wedFriDates: string[] = []
+    const daysInMonth = new Date(year, monthNum, 0).getDate()
+    for (let d = 1; d <= daysInMonth && wedFriDates.length < 8; d++) {
+      const day = new Date(year, monthNum - 1, d).getDay()
+      if (day === 3 || day === 5) {
+        wedFriDates.push(`${year}-${String(monthNum).padStart(2, '0')}-${String(d).padStart(2, '0')}`)
+      }
+    }
+
+    const existingDates = new Set(
+      schedules
+        .filter((s) => s.post_date?.startsWith(activeMonth) && s.video_length === 'short')
+        .map((s) => s.post_date)
+    )
+    const toCreate = wedFriDates.filter((d) => !existingDates.has(d))
+    if (toCreate.length === 0) return
+
+    ;(async () => {
+      const created: YoutubeSchedule[] = []
+      for (const post_date of toCreate) {
+        const res = await fetch('/api/youtube-schedules', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ youtube_account_id: activeAccountId, post_date, video_length: 'short' }),
+        })
+        const json = await res.json()
+        if (res.ok && json.data) created.push(json.data as YoutubeSchedule)
+      }
+      if (created.length > 0) setSchedules((prev) => [...prev, ...created])
+    })()
+  }, [activeAccountId, activeMonth, loadingSchedules, schedules]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (activeAccountId) loadSchedules(activeAccountId)
