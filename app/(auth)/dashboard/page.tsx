@@ -1,19 +1,13 @@
-import { createClient, createAdminClient } from '@/lib/supabase/server'
-import { cookies } from 'next/headers'
+import { createAdminClient } from '@/lib/supabase/server'
+import { getToday, addBusinessDays, isWithin2BusinessDays } from '@/lib/businessDays'
+import Link from 'next/link'
 
 export default async function DashboardPage() {
   const supabase = await createAdminClient()
-  const cookieStore = await cookies()
+  const today = getToday()
+  const warningCutoff = addBusinessDays(today, 2)
 
-  const authClient = await createClient()
-  const { data: { user: authUser } } = await authClient.auth.getUser()
-  let isAdmin = false
-  if (authUser) {
-    const { data: me } = await authClient.from('users').select('role').eq('id', authUser.id).single()
-    isAdmin = me?.role === 'admin'
-  }
-
-  // Stats
+  // ── 機材・貸出 ──────────────────────────────────────────────────────────────
   const { data: allEquipment } = await supabase.from('equipment').select('id, is_active')
   const activeEquipment = allEquipment?.filter(e => e.is_active) ?? []
 
@@ -22,9 +16,74 @@ export default async function DashboardPage() {
     .select('id, status, renter_name, end_date, created_at, purpose, rental_equipment(equipment_id, equipment:equipment(name))')
   const activeRentals = allRentals?.filter(r => r.status === 'active') ?? []
   const overdueRentals = allRentals?.filter(r => r.status === 'overdue') ?? []
-
   const availableCount = Math.max(0, activeEquipment.length - activeRentals.length)
   const recentActivity = [...(allRentals ?? [])].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 5)
+
+  // ── YouTube マイルストーン アラート ─────────────────────────────────────────
+  const { data: ytSchedules } = await supabase
+    .from('youtube_schedules')
+    .select('youtube_account_id, content_type, post_date, milestones, account:youtube_accounts!youtube_account_id(id, channel_name)')
+    .not('status', 'eq', 'posted')
+    .eq('video_length', 'long')
+    .not('milestones', 'is', null)
+
+  type MilestoneAlertItem = { channel: string; title: string; milestoneLabel: string; date: string; accountId: string; kind: 'overdue' | 'warning' }
+
+  const MILESTONE_LABELS: Record<string, string> = {
+    script_draft: '撮影台本初稿', script_fb: '台本FB', script_client: '台本先方提出',
+    shooting: '撮影日', footage_share: '撮影素材共有', internal_draft: '社内初稿',
+    internal_fb: '社内FB', client_first_draft: '先方初稿提出', client_fb: '先方FB',
+    internal_v2: '社内第２稿', client_revision: '修正稿提出', client_final: '先方最終確認',
+    owner_check: 'お施主様チェック', delivery: '納品日', thumbnail: 'サムネ作成日',
+  }
+
+  const ytAlertItems: MilestoneAlertItem[] = []
+  const overdueAccountSet = new Map<string, string>() // accountId → channel_name
+
+  for (const s of ytSchedules ?? []) {
+    const accountRaw = Array.isArray(s.account) ? s.account[0] : s.account
+    const account = accountRaw as { id: string; channel_name: string } | null
+    if (!account) continue
+    const milestones = (s.milestones ?? {}) as Record<string, { date: string | null; done: boolean }>
+    const title = (s.content_type as string | null) ?? (s.post_date ? `投稿日: ${s.post_date}` : '（タイトルなし）')
+
+    for (const [key, ms] of Object.entries(milestones)) {
+      if (!ms?.date || ms.done) continue
+      if (ms.date < today) {
+        overdueAccountSet.set(account.id, account.channel_name)
+        ytAlertItems.push({ channel: account.channel_name, title, milestoneLabel: MILESTONE_LABELS[key] ?? key, date: ms.date, accountId: account.id, kind: 'overdue' })
+      } else if (isWithin2BusinessDays(ms.date, today)) {
+        ytAlertItems.push({ channel: account.channel_name, title, milestoneLabel: MILESTONE_LABELS[key] ?? key, date: ms.date, accountId: account.id, kind: 'warning' })
+      }
+    }
+  }
+
+  // ── 案件タスク 期限アラート ──────────────────────────────────────────────────
+  type TaskAlertItem = { projectId: string; projectTitle: string; taskTitle: string; dueDate: string; kind: 'overdue' | 'warning' }
+  const taskAlertItems: TaskAlertItem[] = []
+
+  const { data: alertTasks } = await supabase
+    .from('tasks')
+    .select('id, title, due_date, status, project:projects!project_id(id, title, deleted_at, status)')
+    .not('status', 'in', '("done","skipped")')
+    .not('due_date', 'is', null)
+    .lte('due_date', warningCutoff)
+
+  for (const t of alertTasks ?? []) {
+    const proj = (Array.isArray(t.project) ? t.project[0] : t.project) as { id: string; title: string; deleted_at: string | null; status: string } | null
+    if (!proj || proj.deleted_at || proj.status === 'completed' || proj.status === 'cancelled') continue
+    if (!t.due_date) continue
+    const kind = (t.due_date as string) < today ? 'overdue' : 'warning'
+    taskAlertItems.push({ projectId: proj.id, projectTitle: proj.title, taskTitle: t.title as string, dueDate: t.due_date as string, kind })
+  }
+
+  const allAlertItems = [...ytAlertItems.map(i => ({ ...i, type: 'youtube' as const })), ...taskAlertItems.map(i => ({ ...i, type: 'project' as const }))]
+    .sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === 'overdue' ? -1 : 1
+      const da = a.type === 'youtube' ? (a as MilestoneAlertItem & { type: 'youtube' }).date : (a as TaskAlertItem & { type: 'project' }).dueDate
+      const db = b.type === 'youtube' ? (b as MilestoneAlertItem & { type: 'youtube' }).date : (b as TaskAlertItem & { type: 'project' }).dueDate
+      return da.localeCompare(db)
+    })
 
   const stats = [
     { label: '総機材数', value: activeEquipment.length, color: 'bg-indigo-500', icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10' },
@@ -52,6 +111,82 @@ export default async function DashboardPage() {
           </div>
         ))}
       </div>
+
+      {/* YouTube 期限超過アカウント */}
+      {overdueAccountSet.size > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-2xl overflow-hidden">
+          <div className="px-6 py-4 border-b border-red-200 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <h3 className="font-bold text-red-800">YouTube 期限超過アカウント</h3>
+          </div>
+          <div className="px-6 py-3 flex flex-wrap gap-2">
+            {Array.from(overdueAccountSet.entries()).map(([id, name]) => (
+              <Link
+                key={id}
+                href={`/youtube?account_id=${id}`}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-100 text-red-700 hover:bg-red-200 rounded-full text-sm font-medium transition-colors border border-red-200"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                {name}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 期限が迫っている案件 */}
+      {allAlertItems.length > 0 && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2">
+            <svg className="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <h3 className="font-bold text-gray-800">期限が迫っている案件</h3>
+            <span className="text-xs text-gray-400 font-normal">（2営業日以内・超過含む）</span>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {allAlertItems.map((item, i) => {
+              const isOverdue = item.kind === 'overdue'
+              if (item.type === 'youtube') {
+                const yt = item as MilestoneAlertItem & { type: 'youtube' }
+                return (
+                  <div key={`yt-${i}`} className={`px-6 py-3 flex items-center justify-between gap-4 ${isOverdue ? 'bg-red-50/60' : 'bg-yellow-50/40'}`}>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${isOverdue ? 'bg-red-100 text-red-600 border-red-200' : 'bg-yellow-100 text-yellow-700 border-yellow-200'}`}>
+                        YouTube
+                      </span>
+                      <Link href={`/youtube?account_id=${yt.accountId}`} className="text-sm text-gray-800 hover:text-blue-600 truncate transition-colors">
+                        {yt.channel} — {yt.title}
+                      </Link>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <span className="text-xs text-gray-500">{yt.milestoneLabel}</span>
+                      <span className={`ml-2 text-xs font-medium ${isOverdue ? 'text-red-600' : 'text-yellow-700'}`}>{yt.date}</span>
+                    </div>
+                  </div>
+                )
+              } else {
+                const proj = item as TaskAlertItem & { type: 'project' }
+                return (
+                  <div key={`task-${i}`} className={`px-6 py-3 flex items-center justify-between gap-4 ${isOverdue ? 'bg-red-50/60' : 'bg-yellow-50/40'}`}>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${isOverdue ? 'bg-red-100 text-red-600 border-red-200' : 'bg-yellow-100 text-yellow-700 border-yellow-200'}`}>
+                        案件
+                      </span>
+                      <Link href={`/projects/${proj.projectId}`} className="text-sm text-gray-800 hover:text-blue-600 truncate transition-colors">
+                        {proj.projectTitle} — {proj.taskTitle}
+                      </Link>
+                    </div>
+                    <span className={`shrink-0 text-xs font-medium ${isOverdue ? 'text-red-600' : 'text-yellow-700'}`}>{proj.dueDate}</span>
+                  </div>
+                )
+              }
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">

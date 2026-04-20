@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback, Suspense } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { ProjectWithRelations, ProjectStatus, WorkType, ShootingType, Task, StaffMemberRef } from '@/types/projects'
+import { isWithin2BusinessDays, getToday } from '@/lib/businessDays'
 import { StatusBadge } from '@/components/projects/StatusBadge'
 import { WORK_TYPE_LABELS, WORK_TYPE_COLORS, SHOOTING_TYPE_LABELS, PROJECT_TYPE_LABELS } from '@/lib/projectConstants'
 
@@ -91,6 +92,20 @@ function isProjectDelayed(project: ProjectWithRelations): boolean {
     if (!t.due_date) return false
     if (t.status === 'done' || t.status === 'skipped') return false
     return new Date(t.due_date + 'T00:00:00') < today
+  })
+}
+
+// 2営業日以内に期限が迫っている未完タスクがあるか
+function isProjectWarning(project: ProjectWithRelations): boolean {
+  if (project.status === 'completed' || project.status === 'cancelled') return false
+  if (isProjectDelayed(project)) return false // 遅延済みは赤なので黄色不要
+  const today = getToday()
+  const tasks = project.tasks as Task[] | undefined
+  if (!tasks) return false
+  return tasks.some((t) => {
+    if (!t.due_date) return false
+    if (t.status === 'done' || t.status === 'skipped') return false
+    return isWithin2BusinessDays(t.due_date, today)
   })
 }
 
@@ -310,6 +325,7 @@ function ProjectsPageInner() {
               restoring={restoring}
               activeTab={activeTab}
               delayed={isProjectDelayed(project)}
+              warning={isProjectWarning(project)}
               onDelete={handleDelete}
               onRestore={handleRestore}
               onMemoSave={handleMemoSave}
@@ -329,6 +345,7 @@ function ProjectCard({
   restoring,
   activeTab,
   delayed,
+  warning,
   onDelete,
   onRestore,
   onMemoSave,
@@ -338,6 +355,7 @@ function ProjectCard({
   restoring: string | null
   activeTab: TabKey
   delayed: boolean
+  warning: boolean
   onDelete: (e: React.MouseEvent, id: string, title: string) => void
   onRestore: (e: React.MouseEvent, id: string, title: string) => void
   onMemoSave: (id: string, memo: string) => void
@@ -365,6 +383,8 @@ function ProjectCard({
     <div className={`relative group bg-white rounded-2xl shadow-sm border hover:shadow-md transition-all flex flex-col ${
       delayed
         ? 'border-2 border-red-500 bg-red-50/40 hover:border-red-600'
+        : warning
+        ? 'border-2 border-yellow-400 bg-yellow-50/30 hover:border-yellow-500'
         : 'border border-gray-100 hover:border-blue-200'
     }`}>
       {/* クリッカブル領域 */}

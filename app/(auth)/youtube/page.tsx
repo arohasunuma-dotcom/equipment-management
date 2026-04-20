@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
 import type { YoutubeAccount, YoutubeSchedule, YoutubeOutsourcerEntry } from '@/types/projects'
+import type { AccountAlert } from '@/app/api/youtube-accounts/alerts/route'
+import { isWithin2BusinessDays, getToday } from '@/lib/businessDays'
 
 interface StaffMember {
   id: string
@@ -69,6 +71,21 @@ export default function YouTubePage() {
   const [addingRow, setAddingRow] = useState(false)
   const [activeMonth, setActiveMonth] = useState<string | null>(getMonthStr(new Date()))
   const [fillingRows, setFillingRows] = useState(false)
+  const [accountAlerts, setAccountAlerts] = useState<Record<string, 'overdue' | 'warning'>>({})
+
+  // アカウントごとのアラート状態を取得
+  useEffect(() => {
+    fetch('/api/youtube-accounts/alerts')
+      .then((r) => r.json())
+      .then((json) => {
+        const alerts: Record<string, 'overdue' | 'warning'> = {}
+        for (const a of (json.data ?? []) as AccountAlert[]) {
+          if (a.has_overdue) alerts[a.account_id] = 'overdue'
+          else if (a.has_warning) alerts[a.account_id] = 'warning'
+        }
+        setAccountAlerts(alerts)
+      })
+  }, [])
 
   useEffect(() => {
     fetch('/api/youtube-accounts')
@@ -271,27 +288,34 @@ export default function YouTubePage() {
           <div className="flex items-center gap-2 flex-wrap">
             {accounts.map((account) => {
               const isActive = activeAccountId === account.id
+              const alert = accountAlerts[account.id]
+              // タブ背景・ボーダー: 赤 > 黄 > デフォルト（アクティブ優先色は変えてアラートを維持）
+              const tabBg = isActive
+                ? alert === 'overdue' ? 'bg-red-600 border-red-600 shadow-red-200'
+                : alert === 'warning' ? 'bg-yellow-500 border-yellow-500 shadow-yellow-200'
+                : 'bg-slate-800 border-slate-800 shadow-slate-200'
+                : alert === 'overdue' ? 'bg-red-50 border-red-300 hover:border-red-400 hover:shadow'
+                : alert === 'warning' ? 'bg-yellow-50 border-yellow-300 hover:border-yellow-400 hover:shadow'
+                : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow'
+              const textColor = isActive ? 'text-white'
+                : alert === 'overdue' ? 'text-red-700 hover:text-red-900'
+                : alert === 'warning' ? 'text-yellow-700 hover:text-yellow-900'
+                : 'text-gray-700 hover:text-gray-900'
               return (
                 <div
                   key={account.id}
-                  className={`flex items-center rounded-full border transition-all shadow-sm ${
-                    isActive
-                      ? 'bg-slate-800 border-slate-800 shadow-slate-200'
-                      : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow'
-                  }`}
+                  className={`flex items-center rounded-full border transition-all shadow-sm ${tabBg}`}
                 >
                   <button
                     onClick={() => setActiveAccountId(account.id)}
-                    className={`pl-4 pr-2 py-1.5 text-sm font-medium transition-colors rounded-l-full ${
-                      isActive ? 'text-white' : 'text-gray-700 hover:text-gray-900'
-                    }`}
+                    className={`pl-4 pr-2 py-1.5 text-sm font-medium transition-colors rounded-l-full ${textColor}`}
                   >
                     {account.channel_name}
                   </button>
                   <button
                     onClick={() => setEditingAccount(account)}
                     className={`p-1.5 transition-colors ${
-                      isActive ? 'text-slate-300 hover:text-white' : 'text-gray-300 hover:text-gray-600'
+                      isActive ? 'text-white/70 hover:text-white' : 'text-gray-300 hover:text-gray-600'
                     }`}
                     title="アカウント編集"
                   >
@@ -302,7 +326,7 @@ export default function YouTubePage() {
                   <button
                     onClick={() => handleDeleteAccount(account.id, account.channel_name)}
                     className={`pr-3 pl-1 py-1.5 text-xs transition-colors rounded-r-full ${
-                      isActive ? 'text-slate-400 hover:text-white' : 'text-gray-300 hover:text-red-400'
+                      isActive ? 'text-white/60 hover:text-white' : 'text-gray-300 hover:text-red-400'
                     }`}
                     title="アカウント削除"
                   >
@@ -632,12 +656,12 @@ function ScheduleRow({
           <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
             {MILESTONE_KEYS.map((mk) => {
               const ms = milestones[mk.key]
-              const today = new Date().toISOString().split('T')[0]
+              const today = getToday()
               const isOverdue = !ms?.done && ms?.date && ms.date < today
-              const isToday = !ms?.done && ms?.date && ms.date === today
+              const isNearDue = !ms?.done && isWithin2BusinessDays(ms?.date, today)
               const alertClass = isOverdue
                 ? 'bg-red-50 border border-red-300'
-                : isToday
+                : isNearDue
                 ? 'bg-yellow-50 border border-yellow-300'
                 : mk.isClient
                 ? 'bg-orange-50 border border-orange-100'
