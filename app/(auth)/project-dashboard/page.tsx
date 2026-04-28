@@ -45,14 +45,24 @@ export default async function ProjectDashboardPage() {
   const warningCutoff = addBusinessDays(todayStr, 2)
   const twoDaysLaterStr = warningCutoff // 撮影準備チェック用（後方互換）
 
-  const [thisWeekResult, shootingDelayedResult, overdueTasksResult, warningTasksResult, youtubeSchedulesResult] = await Promise.all([
+  const weekRange = getWeekRange()
+
+  const [thisWeekResult, thisWeekBatchResult, shootingDelayedResult, overdueTasksResult, warningTasksResult, youtubeSchedulesResult] = await Promise.all([
+    // projects.shooting_date ベース
     supabase
       .from('projects')
       .select('id, title, shooting_date, status, client:clients(name), assigned_editor:users!assigned_editor_id(name)')
-      .gte('shooting_date', getWeekRange().start)
-      .lte('shooting_date', getWeekRange().end)
+      .gte('shooting_date', weekRange.start)
+      .lte('shooting_date', weekRange.end)
       .is('deleted_at', null)
       .order('shooting_date', { ascending: true }),
+
+    // task_batches.shooting_date ベース（projects.shooting_dateがNULLの場合の補完）
+    supabase
+      .from('task_batches')
+      .select('shooting_date, project:projects!project_id(id, title, status, deleted_at, client:clients(name), assigned_editor:users!assigned_editor_id(name))')
+      .gte('shooting_date', weekRange.start)
+      .lte('shooting_date', weekRange.end),
 
     // 撮影準備チェック未完了（撮影あり案件・撮影日が2営業日以内または超過）
     supabase
@@ -89,7 +99,30 @@ export default async function ProjectDashboardPage() {
       .not('milestones', 'is', null),
   ])
 
-  const thisWeekProjects = thisWeekResult.data ?? []
+  // projects.shooting_date と task_batches.shooting_date を統合（重複排除）
+  type WeekProject = { id: string; title: string; shooting_date: string | null; status: string; client: { name: string } | null; assigned_editor: { name: string } | null }
+  const weekProjectMap = new Map<string, WeekProject>()
+
+  for (const p of (thisWeekResult.data ?? [])) {
+    const client = (p.client as unknown) as { name: string } | null
+    const editor = (p.assigned_editor as unknown) as { name: string } | null
+    weekProjectMap.set(p.id, { id: p.id, title: p.title, shooting_date: p.shooting_date, status: p.status, client, assigned_editor: editor })
+  }
+
+  type BatchRow = { shooting_date: string | null; project: { id: string; title: string; status: string; deleted_at: string | null; client: { name: string } | null; assigned_editor: { name: string } | null } | null }
+  for (const row of (thisWeekBatchResult.data ?? []) as unknown as BatchRow[]) {
+    const proj = Array.isArray(row.project) ? (row.project as unknown as BatchRow['project'][])[0] ?? null : row.project
+    if (!proj || proj.deleted_at) continue
+    if (!weekProjectMap.has(proj.id)) {
+      const client = (proj.client as unknown) as { name: string } | null
+      const editor = (proj.assigned_editor as unknown) as { name: string } | null
+      weekProjectMap.set(proj.id, { id: proj.id, title: proj.title, shooting_date: row.shooting_date, status: proj.status, client, assigned_editor: editor })
+    }
+  }
+
+  const thisWeekProjects = Array.from(weekProjectMap.values()).sort((a, b) =>
+    (a.shooting_date ?? '').localeCompare(b.shooting_date ?? '')
+  )
 
   // 撮影準備チェック未完了のものだけ抽出
   const shootingCheckIncomplete = (shootingDelayedResult.data ?? []).filter((p) =>
@@ -390,10 +423,7 @@ export default async function ProjectDashboardPage() {
             <div className="p-10 text-center text-gray-400 italic">今週の撮影予定はありません</div>
           ) : (
             <div>
-              {thisWeekProjects.map((project, i) => {
-                const client = (project.client as unknown) as { name: string } | null
-                const editor = (project.assigned_editor as unknown) as { name: string } | null
-                return (
+              {thisWeekProjects.map((project, i) => (
                   <a
                     key={project.id}
                     href={`/projects/${project.id}`}
@@ -404,8 +434,8 @@ export default async function ProjectDashboardPage() {
                     <div className="flex flex-col gap-0.5">
                       <span className="text-sm font-bold text-gray-900">{project.title}</span>
                       <span className="text-xs text-gray-400">
-                        {client?.name ?? '—'}
-                        {editor ? ` / ${editor.name}` : ''}
+                        {project.client?.name ?? '—'}
+                        {project.assigned_editor ? ` / ${project.assigned_editor.name}` : ''}
                       </span>
                     </div>
                     <div className="flex items-center gap-3">
@@ -415,8 +445,7 @@ export default async function ProjectDashboardPage() {
                       </span>
                     </div>
                   </a>
-                )
-              })}
+              ))}
             </div>
           )}
         </div>
