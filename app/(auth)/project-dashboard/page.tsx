@@ -23,13 +23,16 @@ const YT_MILESTONE_LABELS: Record<string, string> = {
 }
 
 function getWeekRange(): { start: string; end: string } {
-  const today = new Date()
-  const dayOfWeek = today.getDay()
+  // JST (UTC+9) で今日の曜日・日付を計算
+  const nowJST = new Date(Date.now() + 9 * 60 * 60 * 1000)
+  const todayJST = nowJST.toISOString().split('T')[0] // YYYY-MM-DD in JST
+  const dayOfWeek = nowJST.getUTCDay() // UTCDay of JST-adjusted date
   const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
-  const monday = new Date(today)
-  monday.setDate(today.getDate() + diffToMonday)
+  const base = new Date(todayJST + 'T00:00:00Z')
+  const monday = new Date(base)
+  monday.setUTCDate(base.getUTCDate() + diffToMonday)
   const sunday = new Date(monday)
-  sunday.setDate(monday.getDate() + 6)
+  sunday.setUTCDate(monday.getUTCDate() + 6)
 
   const fmt = (d: Date) => d.toISOString().split('T')[0]
   return { start: fmt(monday), end: fmt(sunday) }

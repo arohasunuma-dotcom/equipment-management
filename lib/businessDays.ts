@@ -1,6 +1,11 @@
-/** 今日の日付を YYYY-MM-DD 形式で返す */
+/** JST (UTC+9) での現在日時を返す */
+function nowJST(): Date {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000)
+}
+
+/** 今日の日付を JST で YYYY-MM-DD 形式で返す */
 export function getToday(): string {
-  return new Date().toISOString().split('T')[0]
+  return nowJST().toISOString().split('T')[0]
 }
 
 /** 指定日から N 営業日後の日付を YYYY-MM-DD で返す */
