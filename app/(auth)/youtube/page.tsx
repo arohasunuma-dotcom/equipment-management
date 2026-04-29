@@ -72,6 +72,7 @@ function YouTubePageInner() {
   const [activeMonth, setActiveMonth] = useState<string | null>(getMonthStr(new Date()))
   const [fillingRows, setFillingRows] = useState(false)
   const [accountAlerts, setAccountAlerts] = useState<Record<string, 'overdue' | 'warning'>>({})
+  const [showUnreservedList, setShowUnreservedList] = useState(false)
 
   // アカウントごとのアラート状態を取得
   useEffect(() => {
@@ -436,7 +437,65 @@ function YouTubePageInner() {
                 {fillingRows ? '作成中...' : '月・水・金を自動入力'}
               </button>
             )}
+            {/* 未予約長尺一覧ボタン */}
+            <button
+              onClick={() => setShowUnreservedList(true)}
+              className="inline-flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-900 border border-gray-200 bg-white hover:bg-gray-50 rounded-lg px-2.5 py-1 transition-colors"
+              title="予約されていない長尺動画の一覧"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+              </svg>
+              未予約長尺一覧
+            </button>
           </div>
+
+          {/* 未予約長尺一覧モーダル */}
+          {showUnreservedList && (() => {
+            const unreserved = schedules.filter(
+              (s) => s.video_length === 'long' && !s.post_reserved && s.status !== 'posted'
+            ).sort((a, b) => (a.post_date ?? '').localeCompare(b.post_date ?? ''))
+            return (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setShowUnreservedList(false)}>
+                <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[70vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                    <h3 className="text-sm font-bold text-gray-800">
+                      未予約の長尺動画
+                      <span className="ml-2 text-xs font-normal text-gray-500">({unreserved.length}件)</span>
+                    </h3>
+                    <button onClick={() => setShowUnreservedList(false)} className="text-gray-400 hover:text-gray-600">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  <div className="overflow-y-auto flex-1">
+                    {unreserved.length === 0 ? (
+                      <p className="p-8 text-center text-gray-400 italic text-sm">未予約の長尺動画はありません</p>
+                    ) : (
+                      <ul className="divide-y divide-gray-50">
+                        {unreserved.map((s) => (
+                          <li key={s.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-900 truncate">
+                                {s.content_type || s.property_name || '（タイトル未設定）'}
+                              </p>
+                              <p className="text-xs text-gray-400 mt-0.5">
+                                {s.post_date ?? '投稿日未設定'} ／ {s.status}
+                              </p>
+                            </div>
+                            <span className="shrink-0 text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">
+                              {s.progress ?? 0}%
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
 
           {loadingSchedules ? (
             <div className="flex justify-center py-12">
