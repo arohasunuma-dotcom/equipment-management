@@ -4,6 +4,7 @@ import { ProjectStatus } from '@/types/projects'
 import Link from 'next/link'
 import { getToday, addBusinessDays, isWithin2BusinessDays } from '@/lib/businessDays'
 import { MemoEditor } from '@/components/projects/MemoEditor'
+import { YtAccountMemoEditor } from '@/components/youtube/YtAccountMemoEditor'
 
 const YT_MILESTONE_LABELS: Record<string, string> = {
   script_draft: '撮影台本初稿',
@@ -94,7 +95,7 @@ export default async function ProjectDashboardPage() {
     // YouTubeマイルストーン（長尺・未投稿）
     supabase
       .from('youtube_schedules')
-      .select('id, content_type, post_date, milestones, youtube_account_id, account:youtube_accounts!youtube_account_id(id, channel_name)')
+      .select('id, content_type, post_date, milestones, youtube_account_id, account:youtube_accounts!youtube_account_id(id, channel_name, notes)')
       .not('status', 'eq', 'posted')
       .eq('video_length', 'long')
       .not('milestones', 'is', null),
@@ -167,11 +168,11 @@ export default async function ProjectDashboardPage() {
   type YtScheduleRow = {
     id: string; content_type: string; post_date: string | null; milestones: Record<string, { date: string | null; done: boolean }> | null
     youtube_account_id: string
-    account: { id: string; channel_name: string } | null
+    account: { id: string; channel_name: string; notes?: string | null } | null
   }
   const ytRows = (youtubeSchedulesResult.data ?? []) as unknown as YtScheduleRow[]
-  const ytOverdueByAccount = new Map<string, { channel_name: string; items: { content_type: string; post_date: string | null; milestone: string; date: string }[] }>()
-  const ytWarningByAccount = new Map<string, { channel_name: string; items: { content_type: string; post_date: string | null; milestone: string; date: string }[] }>()
+  const ytOverdueByAccount = new Map<string, { channel_name: string; notes: string | null; items: { content_type: string; post_date: string | null; milestone: string; date: string }[] }>()
+  const ytWarningByAccount = new Map<string, { channel_name: string; notes: string | null; items: { content_type: string; post_date: string | null; milestone: string; date: string }[] }>()
 
   for (const row of ytRows) {
     const account = Array.isArray(row.account) ? (row.account as unknown as { id: string; channel_name: string }[])[0] ?? null : row.account
@@ -182,10 +183,10 @@ export default async function ProjectDashboardPage() {
       if (!ms?.date || ms.done) continue
       const item = { content_type: row.content_type, post_date: row.post_date, milestone: key, date: ms.date }
       if (ms.date < todayStr) {
-        if (!ytOverdueByAccount.has(accountId)) ytOverdueByAccount.set(accountId, { channel_name: account.channel_name, items: [] })
+        if (!ytOverdueByAccount.has(accountId)) ytOverdueByAccount.set(accountId, { channel_name: account.channel_name, notes: account.notes ?? null, items: [] })
         ytOverdueByAccount.get(accountId)!.items.push(item)
       } else if (isWithin2BusinessDays(ms.date, todayStr)) {
-        if (!ytWarningByAccount.has(accountId)) ytWarningByAccount.set(accountId, { channel_name: account.channel_name, items: [] })
+        if (!ytWarningByAccount.has(accountId)) ytWarningByAccount.set(accountId, { channel_name: account.channel_name, notes: account.notes ?? null, items: [] })
         ytWarningByAccount.get(accountId)!.items.push(item)
       }
     }
@@ -276,25 +277,24 @@ export default async function ProjectDashboardPage() {
             })}
 
             {/* YouTubeマイルストーン超過 */}
-            {ytOverdueAccounts.map(({ id, channel_name, items }) => (
-              <Link
-                key={`yt-overdue-${id}`}
-                href="/youtube"
-                className="flex items-start gap-4 bg-white p-5 rounded-2xl shadow-sm border-2 border-red-500 hover:border-red-600 hover:shadow-md transition-all"
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700">YouTube期限超過</span>
-                    <span className="text-xs text-gray-500">{channel_name}</span>
+            {ytOverdueAccounts.map(({ id, channel_name, notes, items }) => (
+              <div key={`yt-overdue-${id}`} className="bg-white p-5 rounded-2xl shadow-sm border-2 border-red-500">
+                <Link href="/youtube" className="flex items-start gap-4 hover:opacity-80 transition-opacity">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700">YouTube期限超過</span>
+                      <span className="text-xs text-gray-500">{channel_name}</span>
+                    </div>
+                    <p className="text-sm font-bold text-gray-900">{channel_name}</p>
+                    <p className="text-xs text-red-600 mt-0.5">
+                      {items.slice(0, 3).map((it) => `${YT_MILESTONE_LABELS[it.milestone] ?? it.milestone}（${it.date}）`).join('・')}
+                      {items.length > 3 && ` 他${items.length - 3}件`}
+                    </p>
                   </div>
-                  <p className="text-sm font-bold text-gray-900">{channel_name}</p>
-                  <p className="text-xs text-red-600 mt-0.5">
-                    {items.slice(0, 3).map((it) => `${YT_MILESTONE_LABELS[it.milestone] ?? it.milestone}（${it.date}）`).join('・')}
-                    {items.length > 3 && ` 他${items.length - 3}件`}
-                  </p>
-                </div>
-                <span className="shrink-0 text-xs font-medium px-2 py-1 rounded-full bg-red-100 text-red-700 mt-1">{items.length}件</span>
-              </Link>
+                  <span className="shrink-0 text-xs font-medium px-2 py-1 rounded-full bg-red-100 text-red-700 mt-1">{items.length}件</span>
+                </Link>
+                <YtAccountMemoEditor accountId={id} initialNotes={notes} />
+              </div>
             ))}
           </div>
         )}
@@ -375,25 +375,24 @@ export default async function ProjectDashboardPage() {
             })}
 
             {/* YouTubeマイルストーン警告 */}
-            {ytWarningAccounts.map(({ id, channel_name, items }) => (
-              <Link
-                key={`yt-warning-${id}`}
-                href="/youtube"
-                className="flex items-start gap-4 bg-white p-5 rounded-2xl shadow-sm border-2 border-yellow-400 hover:border-yellow-500 hover:shadow-md transition-all"
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">YouTube期限間近</span>
-                    <span className="text-xs text-gray-500">{channel_name}</span>
+            {ytWarningAccounts.map(({ id, channel_name, notes, items }) => (
+              <div key={`yt-warning-${id}`} className="bg-white p-5 rounded-2xl shadow-sm border-2 border-yellow-400">
+                <Link href="/youtube" className="flex items-start gap-4 hover:opacity-80 transition-opacity">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">YouTube期限間近</span>
+                      <span className="text-xs text-gray-500">{channel_name}</span>
+                    </div>
+                    <p className="text-sm font-bold text-gray-900">{channel_name}</p>
+                    <p className="text-xs text-yellow-700 mt-0.5">
+                      {items.slice(0, 3).map((it) => `${YT_MILESTONE_LABELS[it.milestone] ?? it.milestone}（${it.date}）`).join('・')}
+                      {items.length > 3 && ` 他${items.length - 3}件`}
+                    </p>
                   </div>
-                  <p className="text-sm font-bold text-gray-900">{channel_name}</p>
-                  <p className="text-xs text-yellow-700 mt-0.5">
-                    {items.slice(0, 3).map((it) => `${YT_MILESTONE_LABELS[it.milestone] ?? it.milestone}（${it.date}）`).join('・')}
-                    {items.length > 3 && ` 他${items.length - 3}件`}
-                  </p>
-                </div>
-                <span className="shrink-0 text-xs font-medium px-2 py-1 rounded-full bg-yellow-100 text-yellow-700 mt-1">{items.length}件</span>
-              </Link>
+                  <span className="shrink-0 text-xs font-medium px-2 py-1 rounded-full bg-yellow-100 text-yellow-700 mt-1">{items.length}件</span>
+                </Link>
+                <YtAccountMemoEditor accountId={id} initialNotes={notes} />
+              </div>
             ))}
           </div>
         )}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, Suspense } from 'react'
+import { useEffect, useState, useCallback, useRef, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import type { YoutubeAccount, YoutubeSchedule, YoutubeOutsourcerEntry } from '@/types/projects'
 import type { AccountAlert } from '@/app/api/youtube-accounts/alerts/route'
@@ -535,6 +535,8 @@ function ScheduleRow({
 }) {
   const [expanded, setExpanded] = useState(false)
   const [showOutsourcers, setShowOutsourcers] = useState(false)
+  const [notes, setNotes] = useState(schedule.notes ?? '')
+  const notesRef = useRef(schedule.notes ?? '')
   const milestones = schedule.milestones ?? {}
   const isLong = schedule.video_length === 'long'
   const entries: YoutubeOutsourcerEntry[] = schedule.youtube_outsourcers ?? []
@@ -739,6 +741,25 @@ function ScheduleRow({
       )}
 
       {/* ─── 展開時のマイルストーンパネル（長尺のみ） ─── */}
+      {expanded && (
+        <div className="border-t border-gray-100 px-8 py-2 bg-gray-50">
+          <div className="relative">
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              onBlur={(e) => {
+                const val = e.target.value
+                if (val === notesRef.current) return
+                notesRef.current = val
+                onUpdate(schedule.id, { notes: val || null })
+              }}
+              placeholder="メモを追加..."
+              rows={2}
+              className="w-full text-xs text-gray-600 bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-blue-400 placeholder-gray-300"
+            />
+          </div>
+        </div>
+      )}
       {isLong && expanded && (
         <div className="bg-gray-50 border-t border-gray-100 px-8 py-3">
           <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
