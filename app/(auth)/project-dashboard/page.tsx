@@ -3,6 +3,7 @@ import { StatusBadge } from '@/components/projects/StatusBadge'
 import { ProjectStatus } from '@/types/projects'
 import Link from 'next/link'
 import { getToday, addBusinessDays, isWithin2BusinessDays } from '@/lib/businessDays'
+import { MemoEditor } from '@/components/projects/MemoEditor'
 
 const YT_MILESTONE_LABELS: Record<string, string> = {
   script_draft: '撮影台本初稿',
@@ -51,7 +52,7 @@ export default async function ProjectDashboardPage() {
     // projects.shooting_date ベース
     supabase
       .from('projects')
-      .select('id, title, shooting_date, status, client:clients(name), assigned_editor:users!assigned_editor_id(name)')
+      .select('id, title, shooting_date, status, memo, client:clients(name), assigned_editor:users!assigned_editor_id(name)')
       .gte('shooting_date', weekRange.start)
       .lte('shooting_date', weekRange.end)
       .is('deleted_at', null)
@@ -60,14 +61,14 @@ export default async function ProjectDashboardPage() {
     // task_batches.shooting_date ベース（projects.shooting_dateがNULLの場合の補完）
     supabase
       .from('task_batches')
-      .select('shooting_date, project:projects!project_id(id, title, status, deleted_at, client:clients(name), assigned_editor:users!assigned_editor_id(name))')
+      .select('shooting_date, project:projects!project_id(id, title, status, memo, deleted_at, client:clients(name), assigned_editor:users!assigned_editor_id(name))')
       .gte('shooting_date', weekRange.start)
       .lte('shooting_date', weekRange.end),
 
     // 撮影準備チェック未完了（撮影あり案件・撮影日が2営業日以内または超過）
     supabase
       .from('projects')
-      .select('id, title, shooting_date, work_type, status, kickoff_done, calendar_done, rental_car_done, hotel_done, transport_reservation_done, equipment_reservation_done, client:clients(name)')
+      .select('id, title, shooting_date, work_type, status, memo, kickoff_done, calendar_done, rental_car_done, hotel_done, transport_reservation_done, equipment_reservation_done, client:clients(name)')
       .in('work_type', ['shooting_only', 'shooting_and_editing'])
       .eq('status', 'shooting_scheduled')
       .lte('shooting_date', twoDaysLaterStr)
@@ -76,7 +77,7 @@ export default async function ProjectDashboardPage() {
     // タスク期限超過（編集あり）
     supabase
       .from('tasks')
-      .select('id, title, due_date, project:projects!project_id(id, title, work_type, status, deleted_at, client:clients(name))')
+      .select('id, title, due_date, project:projects!project_id(id, title, work_type, status, memo, deleted_at, client:clients(name))')
       .lt('due_date', todayStr)
       .not('status', 'in', '("done","skipped")')
       .order('due_date', { ascending: true }),
@@ -84,7 +85,7 @@ export default async function ProjectDashboardPage() {
     // タスク期限が迫っている（2営業日以内・今日以降）
     supabase
       .from('tasks')
-      .select('id, title, due_date, project:projects!project_id(id, title, work_type, status, deleted_at, client:clients(name))')
+      .select('id, title, due_date, project:projects!project_id(id, title, work_type, status, memo, deleted_at, client:clients(name))')
       .gte('due_date', todayStr)
       .lte('due_date', warningCutoff)
       .not('status', 'in', '("done","skipped")')
@@ -100,23 +101,23 @@ export default async function ProjectDashboardPage() {
   ])
 
   // projects.shooting_date と task_batches.shooting_date を統合（重複排除）
-  type WeekProject = { id: string; title: string; shooting_date: string | null; status: string; client: { name: string } | null; assigned_editor: { name: string } | null }
+  type WeekProject = { id: string; title: string; shooting_date: string | null; status: string; memo: string | null; client: { name: string } | null; assigned_editor: { name: string } | null }
   const weekProjectMap = new Map<string, WeekProject>()
 
   for (const p of (thisWeekResult.data ?? [])) {
     const client = (p.client as unknown) as { name: string } | null
     const editor = (p.assigned_editor as unknown) as { name: string } | null
-    weekProjectMap.set(p.id, { id: p.id, title: p.title, shooting_date: p.shooting_date, status: p.status, client, assigned_editor: editor })
+    weekProjectMap.set(p.id, { id: p.id, title: p.title, shooting_date: p.shooting_date, status: p.status, memo: (p as unknown as { memo?: string | null }).memo ?? null, client, assigned_editor: editor })
   }
 
-  type BatchRow = { shooting_date: string | null; project: { id: string; title: string; status: string; deleted_at: string | null; client: { name: string } | null; assigned_editor: { name: string } | null } | null }
+  type BatchRow = { shooting_date: string | null; project: { id: string; title: string; status: string; memo?: string | null; deleted_at: string | null; client: { name: string } | null; assigned_editor: { name: string } | null } | null }
   for (const row of (thisWeekBatchResult.data ?? []) as unknown as BatchRow[]) {
     const proj = Array.isArray(row.project) ? (row.project as unknown as BatchRow['project'][])[0] ?? null : row.project
     if (!proj || proj.deleted_at) continue
     if (!weekProjectMap.has(proj.id)) {
       const client = (proj.client as unknown) as { name: string } | null
       const editor = (proj.assigned_editor as unknown) as { name: string } | null
-      weekProjectMap.set(proj.id, { id: proj.id, title: proj.title, shooting_date: row.shooting_date, status: proj.status, client, assigned_editor: editor })
+      weekProjectMap.set(proj.id, { id: proj.id, title: proj.title, shooting_date: row.shooting_date, status: proj.status, memo: proj.memo ?? null, client, assigned_editor: editor })
     }
   }
 
@@ -138,7 +139,7 @@ export default async function ProjectDashboardPage() {
   // タスク期限超過（削除済み案件を除外し、プロジェクト単位でまとめる）
   type OverdueTaskRow = {
     id: string; title: string; due_date: string
-    project: { id: string; title: string; work_type: string; status: string; deleted_at: string | null; client: { name: string } | null } | null
+    project: { id: string; title: string; work_type: string; status: string; memo?: string | null; deleted_at: string | null; client: { name: string } | null } | null
   }
   const overdueTaskRows = (overdueTasksResult.data ?? []) as unknown as OverdueTaskRow[]
   const overdueByProject = new Map<string, { project: OverdueTaskRow['project']; tasks: { title: string; due_date: string }[] }>()
@@ -230,24 +231,23 @@ export default async function ProjectDashboardPage() {
                 !project.equipment_reservation_done && '機材予約',
               ].filter(Boolean).join('・')
               return (
-                <Link
-                  key={project.id}
-                  href={`/projects/${project.id}`}
-                  className="flex items-start gap-4 bg-white p-5 rounded-2xl shadow-sm border-2 border-red-500 hover:border-red-600 hover:shadow-md transition-all"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700">撮影準備超過</span>
-                      {client && <span className="text-xs text-gray-500">{client.name}</span>}
+                <div key={project.id} className="bg-white p-5 rounded-2xl shadow-sm border-2 border-red-500">
+                  <Link href={`/projects/${project.id}`} className="flex items-start gap-4 hover:opacity-80 transition-opacity">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700">撮影準備超過</span>
+                        {client && <span className="text-xs text-gray-500">{client.name}</span>}
+                      </div>
+                      <p className="text-sm font-bold text-gray-900">{project.title}</p>
+                      <p className="text-xs text-red-600 mt-0.5">未完了: {missingItems}</p>
                     </div>
-                    <p className="text-sm font-bold text-gray-900">{project.title}</p>
-                    <p className="text-xs text-red-600 mt-0.5">未完了: {missingItems}</p>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <p className="text-xs text-gray-500">撮影日</p>
-                    <p className="text-sm font-semibold text-gray-800">{project.shooting_date}</p>
-                  </div>
-                </Link>
+                    <div className="shrink-0 text-right">
+                      <p className="text-xs text-gray-500">撮影日</p>
+                      <p className="text-sm font-semibold text-gray-800">{project.shooting_date}</p>
+                    </div>
+                  </Link>
+                  <MemoEditor projectId={project.id} initialMemo={(project as unknown as { memo?: string | null }).memo ?? null} />
+                </div>
               )
             })}
 
@@ -255,24 +255,23 @@ export default async function ProjectDashboardPage() {
             {overdueProjects.map(({ project, tasks }) => {
               const client = (project?.client as unknown) as { name: string } | null
               return (
-                <Link
-                  key={project?.id}
-                  href={`/projects/${project?.id}`}
-                  className="flex items-start gap-4 bg-white p-5 rounded-2xl shadow-sm border-2 border-red-500 hover:border-red-600 hover:shadow-md transition-all"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700">タスク期限超過</span>
-                      {client && <span className="text-xs text-gray-500">{client.name}</span>}
+                <div key={project?.id} className="bg-white p-5 rounded-2xl shadow-sm border-2 border-red-500">
+                  <Link href={`/projects/${project?.id}`} className="flex items-start gap-4 hover:opacity-80 transition-opacity">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700">タスク期限超過</span>
+                        {client && <span className="text-xs text-gray-500">{client.name}</span>}
+                      </div>
+                      <p className="text-sm font-bold text-gray-900">{project?.title}</p>
+                      <p className="text-xs text-red-600 mt-0.5">
+                        {tasks.slice(0, 3).map((t) => `${t.title}（${t.due_date}）`).join('・')}
+                        {tasks.length > 3 && ` 他${tasks.length - 3}件`}
+                      </p>
                     </div>
-                    <p className="text-sm font-bold text-gray-900">{project?.title}</p>
-                    <p className="text-xs text-red-600 mt-0.5">
-                      {tasks.slice(0, 3).map((t) => `${t.title}（${t.due_date}）`).join('・')}
-                      {tasks.length > 3 && ` 他${tasks.length - 3}件`}
-                    </p>
-                  </div>
-                  <StatusBadge status={project?.status as ProjectStatus} className="shrink-0 mt-1" />
-                </Link>
+                    <StatusBadge status={project?.status as ProjectStatus} className="shrink-0 mt-1" />
+                  </Link>
+                  {project?.id && <MemoEditor projectId={project.id} initialMemo={project.memo ?? null} />}
+                </div>
               )
             })}
 
@@ -333,47 +332,45 @@ export default async function ProjectDashboardPage() {
                 !project.equipment_reservation_done && '機材予約',
               ].filter(Boolean).join('・')
               return (
-                <Link
-                  key={project.id}
-                  href={`/projects/${project.id}`}
-                  className="flex items-start gap-4 bg-white p-5 rounded-2xl shadow-sm border-2 border-yellow-400 hover:border-yellow-500 hover:shadow-md transition-all"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">撮影準備未完了</span>
-                      {client && <span className="text-xs text-gray-500">{client.name}</span>}
+                <div key={project.id} className="bg-white p-5 rounded-2xl shadow-sm border-2 border-yellow-400">
+                  <Link href={`/projects/${project.id}`} className="flex items-start gap-4 hover:opacity-80 transition-opacity">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">撮影準備未完了</span>
+                        {client && <span className="text-xs text-gray-500">{client.name}</span>}
+                      </div>
+                      <p className="text-sm font-bold text-gray-900">{project.title}</p>
+                      <p className="text-xs text-yellow-700 mt-0.5">未完了: {missingItems}</p>
                     </div>
-                    <p className="text-sm font-bold text-gray-900">{project.title}</p>
-                    <p className="text-xs text-yellow-700 mt-0.5">未完了: {missingItems}</p>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <p className="text-xs text-gray-500">撮影日</p>
-                    <p className="text-sm font-semibold text-gray-800">{project.shooting_date}</p>
-                  </div>
-                </Link>
+                    <div className="shrink-0 text-right">
+                      <p className="text-xs text-gray-500">撮影日</p>
+                      <p className="text-sm font-semibold text-gray-800">{project.shooting_date}</p>
+                    </div>
+                  </Link>
+                  <MemoEditor projectId={project.id} initialMemo={(project as unknown as { memo?: string | null }).memo ?? null} />
+                </div>
               )
             })}
             {warningProjects.map(({ project, tasks }) => {
               const client = (project?.client as unknown) as { name: string } | null
               return (
-                <Link
-                  key={project?.id}
-                  href={`/projects/${project?.id}`}
-                  className="flex items-start gap-4 bg-white p-5 rounded-2xl shadow-sm border-2 border-yellow-400 hover:border-yellow-500 hover:shadow-md transition-all"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">タスク期限間近</span>
-                      {client && <span className="text-xs text-gray-500">{client.name}</span>}
+                <div key={project?.id} className="bg-white p-5 rounded-2xl shadow-sm border-2 border-yellow-400">
+                  <Link href={`/projects/${project?.id}`} className="flex items-start gap-4 hover:opacity-80 transition-opacity">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">タスク期限間近</span>
+                        {client && <span className="text-xs text-gray-500">{client.name}</span>}
+                      </div>
+                      <p className="text-sm font-bold text-gray-900">{project?.title}</p>
+                      <p className="text-xs text-yellow-700 mt-0.5">
+                        {tasks.slice(0, 3).map((t) => `${t.title}（${t.due_date}）`).join('・')}
+                        {tasks.length > 3 && ` 他${tasks.length - 3}件`}
+                      </p>
                     </div>
-                    <p className="text-sm font-bold text-gray-900">{project?.title}</p>
-                    <p className="text-xs text-yellow-700 mt-0.5">
-                      {tasks.slice(0, 3).map((t) => `${t.title}（${t.due_date}）`).join('・')}
-                      {tasks.length > 3 && ` 他${tasks.length - 3}件`}
-                    </p>
-                  </div>
-                  <StatusBadge status={project?.status as ProjectStatus} className="shrink-0 mt-1" />
-                </Link>
+                    <StatusBadge status={project?.status as ProjectStatus} className="shrink-0 mt-1" />
+                  </Link>
+                  {project?.id && <MemoEditor projectId={project.id} initialMemo={project.memo ?? null} />}
+                </div>
               )
             })}
 
@@ -424,13 +421,8 @@ export default async function ProjectDashboardPage() {
           ) : (
             <div>
               {thisWeekProjects.map((project, i) => (
-                  <a
-                    key={project.id}
-                    href={`/projects/${project.id}`}
-                    className={`px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors ${
-                      i !== thisWeekProjects.length - 1 ? 'border-b border-gray-50' : ''
-                    }`}
-                  >
+                <div key={project.id} className={`px-6 py-4 ${i !== thisWeekProjects.length - 1 ? 'border-b border-gray-50' : ''}`}>
+                  <Link href={`/projects/${project.id}`} className="flex items-center justify-between hover:opacity-80 transition-opacity">
                     <div className="flex flex-col gap-0.5">
                       <span className="text-sm font-bold text-gray-900">{project.title}</span>
                       <span className="text-xs text-gray-400">
@@ -444,7 +436,9 @@ export default async function ProjectDashboardPage() {
                         {project.shooting_date}
                       </span>
                     </div>
-                  </a>
+                  </Link>
+                  <MemoEditor projectId={project.id} initialMemo={project.memo} />
+                </div>
               ))}
             </div>
           )}
