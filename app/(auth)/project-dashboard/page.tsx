@@ -175,7 +175,7 @@ export default async function ProjectDashboardPage() {
   const ytWarningByAccount = new Map<string, { channel_name: string; notes: string | null; items: { content_type: string; post_date: string | null; milestone: string; date: string }[] }>()
 
   for (const row of ytRows) {
-    const account = Array.isArray(row.account) ? (row.account as unknown as { id: string; channel_name: string }[])[0] ?? null : row.account
+    const account = Array.isArray(row.account) ? (row.account as unknown as { id: string; channel_name: string; notes?: string | null }[])[0] ?? null : row.account
     if (!account || !row.milestones) continue
     const accountId = row.youtube_account_id
 
