@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/server'
-import { getTemplateForType } from '@/lib/taskTemplates'
+import { getTemplateForType, calculateTaskSchedule } from '@/lib/taskTemplates'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 
@@ -15,18 +15,6 @@ const createBatchSchema = z.object({
   type: z.enum(['room_tour', 'interview', 'texture', 'other']).optional().nullable(),
   editor_member_id: z.string().uuid().optional().nullable(),
 })
-
-/** 指定した日付から N 営業日前の日付を返す（土日をスキップ） */
-function subtractBusinessDays(dateStr: string, days: number): string {
-  const date = new Date(dateStr + 'T00:00:00Z')
-  let remaining = days
-  while (remaining > 0) {
-    date.setUTCDate(date.getUTCDate() - 1)
-    const dow = date.getUTCDay()
-    if (dow !== 0 && dow !== 6) remaining--
-  }
-  return date.toISOString().split('T')[0]
-}
 
 type RouteContext = { params: Promise<{ id: string }> }
 
@@ -90,26 +78,27 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     )
   }
 
+  // バッチに撮影日がある場合はプロジェクトに同期
+  if (parsed.data.shooting_date) {
+    await supabase
+      .from('projects')
+      .update({ shooting_date: parsed.data.shooting_date, updated_at: new Date().toISOString() })
+      .eq('id', id)
+  }
+
   // タスクを一括作成（バッチの type があればそれを優先）
   const templates = getTemplateForType(parsed.data.type ?? project.type)
   const shootingDate = parsed.data.shooting_date ?? null
-  const taskRows = templates.map((t) => {
-    let due_date: string | null = null
-    if (shootingDate) {
-      if (t.step_order === 1) due_date = subtractBusinessDays(shootingDate, 10)
-      else if (t.step_order === 2) due_date = subtractBusinessDays(shootingDate, 7)
-      else if (t.step_order === 3) due_date = subtractBusinessDays(shootingDate, 5)
-      else if (t.step_order === 4) due_date = shootingDate
-    }
-    return {
-      project_id: id,
-      batch_id: batch.id,
-      step_order: t.step_order,
-      title: t.title,
-      status: 'pending' as const,
-      due_date,
-    }
-  })
+  const dueDate = parsed.data.due_date ?? null
+  const schedule = shootingDate ? calculateTaskSchedule(shootingDate, dueDate) : null
+  const taskRows = templates.map((t) => ({
+    project_id: id,
+    batch_id: batch.id,
+    step_order: t.step_order,
+    title: t.title,
+    status: 'pending' as const,
+    due_date: schedule ? (schedule[t.step_order] ?? null) : null,
+  }))
 
   const { data: tasks, error: taskError } = await supabase
     .from('tasks')

@@ -83,6 +83,7 @@ export interface Project {
   hotel_done: boolean
   transport_reservation_done: boolean
   equipment_reservation_done: boolean
+  revenue?: number | null
   memo?: string | null
   notes?: string | null
   deleted_at?: string | null
@@ -124,6 +125,7 @@ export interface Task {
   title: string
   status: TaskStatus
   due_date?: string | null
+  actual_hours?: number | null
   assignee_id?: string | null
   assignee?: ProjectUser | null
   notes?: string | null
@@ -171,7 +173,7 @@ export interface YoutubeAccount {
 }
 
 export type YoutubeVideoLength = 'short' | 'long'
-export type YoutubeScheduleStatus = 'pending' | 'editing' | 'delivered' | 'reserved' | 'posted'
+export type YoutubeScheduleStatus = 'pending' | 'shooting' | 'editing' | 'delivered' | 'reserved' | 'posted'
 
 export interface MilestoneEntry {
   date: string | null

@@ -46,3 +46,26 @@ export async function createAdminClient() {
     }
   )
 }
+
+export async function createDraftsClient() {
+  const cookieStore = await cookies()
+
+  return createServerClient(
+    process.env.DRAFTS_SUPABASE_URL!,
+    process.env.DRAFTS_SUPABASE_SERVICE_ROLE_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll()
+        },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            )
+          } catch {}
+        },
+      },
+    }
+  )
+}

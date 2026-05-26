@@ -2,12 +2,14 @@
 
 import { useState, useTransition, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { toast } from 'sonner'
 import { StatusBadge } from '@/components/projects/StatusBadge'
 import type {
   ProjectWithRelations, Task, TaskBatch, TaskStatus, ProjectStatus, ProjectOutsourcer, Outsourcer,
   ShootingType, VideoFormat, ProjectType,
 } from '@/types/projects'
 import { TASK_STATUS_LABELS, STATUS_LABELS, SHOOTING_TYPE_LABELS, EDITING_PROJECT_TYPE_LABELS } from '@/lib/projectConstants'
+import { calculateTaskSchedule } from '@/lib/taskTemplates'
 
 interface StaffMember { id: string; name: string }
 interface Props { project: ProjectWithRelations; outsourcers?: Outsourcer[]; staffMembers?: StaffMember[] }
@@ -24,39 +26,41 @@ const ALL_STATUS_OPTIONS: ProjectStatus[] = [
   'fb_responded', 'fix_editing', 're_fb_waiting', 'completed', 'cancelled',
 ]
 
-/** 指定した日付から N 営業日前の日付を返す（土日をスキップ） */
-function subtractBusinessDays(dateStr: string, days: number): string {
-  const date = new Date(dateStr + 'T00:00:00Z')
-  let remaining = days
-  while (remaining > 0) {
-    date.setUTCDate(date.getUTCDate() - 1)
-    const dow = date.getUTCDay()
-    if (dow !== 0 && dow !== 6) remaining--
-  }
-  return date.toISOString().split('T')[0]
-}
-
 // ─── バッチ内タスクリスト ────────────────────────────────────────────────────
 
 function BatchTaskList({
   projectId,
+  batchId,
+  batchDueDate,
   tasks,
   onStatusChange,
+  onHoursChange,
   updatingId,
   scheduledDates,
+  onScheduleCascade,
 }: {
   projectId: string
+  batchId: string
+  batchDueDate?: string | null
   tasks: Task[]
   onStatusChange: (task: Task, status: TaskStatus) => void
+  onHoursChange?: (taskId: string, hours: number | null) => void
   updatingId: string | null
   scheduledDates?: Record<number, string | null>
+  onScheduleCascade?: (dates: Record<number, string | null>) => void
 }) {
   const [taskDueDates, setTaskDueDates] = useState<Record<string, string>>(() => {
     const m: Record<string, string> = {}
     for (const t of tasks) { if (t.due_date) m[t.id] = t.due_date }
     return m
   })
+  const [taskHours, setTaskHours] = useState<Record<string, string>>(() => {
+    const m: Record<string, string> = {}
+    for (const t of tasks) { if (t.actual_hours != null) m[t.id] = String(t.actual_hours) }
+    return m
+  })
   const dueDateRefs = useRef<Record<string, string>>({})
+  const hoursRefs = useRef<Record<string, string>>({})
 
   // 撮影日変更時のスケジュール自動更新を反映
   useEffect(() => {
@@ -74,14 +78,43 @@ function BatchTaskList({
     })
   }, [scheduledDates, tasks])
 
-  const handleDueDateBlur = async (taskId: string, value: string) => {
+  const handleTaskDueDateChange = (taskId: string, value: string) => {
+    setTaskDueDates((prev) => ({ ...prev, [taskId]: value }))
     if (value === (dueDateRefs.current[taskId] ?? '')) return
     dueDateRefs.current[taskId] = value
-    await fetch(`/api/projects/${projectId}/tasks/${taskId}`, {
+    fetch(`/api/projects/${projectId}/tasks/${taskId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ due_date: value || null }),
     })
+    // 社内初稿（step 7）変更時は全工程を自動再計算
+    const task = tasks.find((t) => t.id === taskId)
+    if (task?.step_order === 7 && value && onScheduleCascade) {
+      fetch(`/api/projects/${projectId}/task-batches/${batchId}/reschedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ draft_date: value, due_date: batchDueDate ?? null }),
+      })
+        .then((res) => res.json())
+        .then((json) => {
+          if (json.data?.taskSchedule) {
+            onScheduleCascade(json.data.taskSchedule)
+            toast.success('全工程のスケジュールを保存しました')
+          }
+        })
+    }
+  }
+
+  const handleHoursBlur = async (taskId: string, value: string) => {
+    if (value === (hoursRefs.current[taskId] ?? '')) return
+    hoursRefs.current[taskId] = value
+    const hours = value.trim() ? parseFloat(value) : null
+    await fetch(`/api/projects/${projectId}/tasks/${taskId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actual_hours: hours }),
+    })
+    onHoursChange?.(taskId, hours)
   }
 
   const sorted = [...tasks].sort((a, b) => a.step_order - b.step_order)
@@ -137,8 +170,7 @@ function BatchTaskList({
               <input
                 type="date"
                 value={taskDueDates[task.id] ?? ''}
-                onChange={(e) => setTaskDueDates((prev) => ({ ...prev, [task.id]: e.target.value }))}
-                onBlur={(e) => handleDueDateBlur(task.id, e.target.value)}
+                onChange={(e) => handleTaskDueDateChange(task.id, e.target.value)}
                 className={`text-xs border rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 flex-1 min-w-0 ${
                   isOverdue ? 'border-red-300 text-red-700' : 'border-gray-300 text-gray-800'
                 }`}
@@ -153,6 +185,22 @@ function BatchTaskList({
                   <option key={s} value={s}>{TASK_STATUS_LABELS[s]}</option>
                 ))}
               </select>
+            </div>
+            {/* 3行目: 稼働時間 */}
+            <div className="flex items-center gap-1.5 pl-7">
+              <span className="text-xs text-gray-400">⏱</span>
+              <input
+                type="number"
+                min={0}
+                max={999}
+                step={0.5}
+                value={taskHours[task.id] ?? ''}
+                onChange={(e) => setTaskHours((prev) => ({ ...prev, [task.id]: e.target.value }))}
+                onBlur={(e) => handleHoursBlur(task.id, e.target.value)}
+                placeholder="0"
+                className="w-16 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              <span className="text-xs text-gray-400">h</span>
             </div>
           </li>
           )
@@ -223,10 +271,11 @@ function BatchHeader({
     savePatch({ name: name || batch.name })
   }
 
-  const handleDueDateBlur = () => {
-    if (dueDate === dueDateRef.current) return
-    dueDateRef.current = dueDate
-    savePatch({ due_date: dueDate || null })
+  const handleDueDateChange = (value: string) => {
+    setDueDate(value)
+    if (value === dueDateRef.current) return
+    dueDateRef.current = value
+    savePatch({ due_date: value || null })
   }
 
   const saveBatchShootingDate = async (value: string) => {
@@ -242,16 +291,13 @@ function BatchHeader({
     if (res.ok) {
       onUpdate(batch.id, json.data)
       if (onTaskDatesUpdated) {
-        const sd = shootingDate
-        onTaskDatesUpdated(batch.id, sd
-          ? {
-              1: subtractBusinessDays(sd, 10),
-              2: subtractBusinessDays(sd, 7),
-              3: subtractBusinessDays(sd, 5),
-              4: sd,
-            }
-          : { 1: null, 2: null, 3: null, 4: null }
-        )
+        // APIが返した taskSchedule を優先、なければクライアント側で再計算
+        const schedule: Record<number, string | null> = json.taskSchedule
+          ?? (shootingDate
+              ? calculateTaskSchedule(shootingDate, dueDate || null)
+              : Object.fromEntries(Array.from({ length: 16 }, (_, i) => [i + 1, null]))
+            )
+        onTaskDatesUpdated(batch.id, schedule)
       }
     }
   }
@@ -336,8 +382,7 @@ function BatchHeader({
           <input
             type="date"
             value={dueDate}
-            onChange={(e) => setDueDate(e.target.value)}
-            onBlur={handleDueDateBlur}
+            onChange={(e) => handleDueDateChange(e.target.value)}
             className="flex-1 text-xs border border-gray-300 rounded px-1.5 py-1 bg-white text-gray-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
         </div>
@@ -476,6 +521,111 @@ function BatchHeader({
   )
 }
 
+// ─── タスク初期化ボタン ────────────────────────────────────────────────────────
+
+function InitTasksButton({
+  projectId,
+  batchId,
+  onCreated,
+}: {
+  projectId: string
+  batchId: string
+  onCreated: (tasks: Task[]) => void
+}) {
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleInit = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/projects/${projectId}/task-batches/${batchId}/init-tasks`, {
+        method: 'POST',
+      })
+      const json = await res.json()
+      if (!res.ok || json.error) {
+        setError(json.error?.message ?? 'タスクの生成に失敗しました')
+        return
+      }
+      onCreated(json.data.tasks ?? [])
+    } catch {
+      setError('ネットワークエラーが発生しました')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="p-6 text-center space-y-2">
+      <p className="text-sm text-gray-400 italic">タスクがありません</p>
+      <button
+        onClick={handleInit}
+        disabled={loading}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+      >
+        {loading ? (
+          <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+        ) : (
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+        )}
+        {loading ? '生成中...' : 'タスクを生成'}
+      </button>
+      {error && <p className="text-xs text-red-500">{error}</p>}
+    </div>
+  )
+}
+
+// ─── 動画フィードバックセクション ────────────────────────────────────────────
+
+function VideoFeedbackSection() {
+  const [youtubeUrl, setYoutubeUrl] = useState('')
+
+  const handleOpen = () => {
+    const base = 'https://video-feedback-alpha.vercel.app/'
+    const url = youtubeUrl.trim()
+      ? `${base}?url=${encodeURIComponent(youtubeUrl.trim())}`
+      : base
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+      <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2">
+        <svg className="w-5 h-5 text-red-500" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+        </svg>
+        <h2 className="font-semibold text-gray-800">動画フィードバック</h2>
+      </div>
+      <div className="px-6 py-4 space-y-3">
+        <p className="text-xs text-gray-500">YouTubeのURLを入力してフィードバックアプリを開きます</p>
+        <div className="flex gap-2">
+          <input
+            type="url"
+            value={youtubeUrl}
+            onChange={(e) => setYoutubeUrl(e.target.value)}
+            placeholder="https://www.youtube.com/watch?v=..."
+            className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-400 min-w-0"
+          />
+          <button
+            onClick={handleOpen}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors shrink-0"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+            </svg>
+            レビューを開く
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── メインコンポーネント ─────────────────────────────────────────────────────
 
 export function ProjectDetailClient({ project, outsourcers: outsourcersProp = [], staffMembers: staffMembersProp = [] }: Props) {
@@ -500,7 +650,18 @@ export function ProjectDetailClient({ project, outsourcers: outsourcersProp = []
   const [newBatchName, setNewBatchName] = useState('')
   const [newBatchDue, setNewBatchDue] = useState('')
   const [newBatchShootingDate, setNewBatchShootingDate] = useState('')
+  const [newBatchDraftDate, setNewBatchDraftDate] = useState('')
   const [creatingBatch, setCreatingBatch] = useState(false)
+
+  const [revenue, setRevenue] = useState<number | null>(project.revenue ?? null)
+  const revenueInputRef = useRef<string>(project.revenue != null ? String(project.revenue) : '')
+
+  const handleRevenueBlur = (value: string) => {
+    const num = value.trim() ? parseInt(value.replace(/,/g, ''), 10) : null
+    if (num === revenue) return
+    setRevenue(num)
+    patchProject({ revenue: num })
+  }
 
   const [directorId, setDirectorId] = useState(project.director_id ?? '')
 
@@ -687,11 +848,31 @@ export function ProjectDetailClient({ project, outsourcers: outsourcersProp = []
       })
       const json = await res.json()
       if (!res.ok || json.error) return
-      setBatches((prev) => [...prev, { ...json.data, tasks: json.data.tasks ?? [] }])
+
+      // 社内初稿日が設定されていればスケジュールを一括保存
+      let tasks: Task[] = json.data.tasks ?? []
+      if (newBatchDraftDate && json.data?.id) {
+        const rRes = await fetch(`/api/projects/${project.id}/task-batches/${json.data.id}/reschedule`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ draft_date: newBatchDraftDate, due_date: newBatchDue || null }),
+        })
+        if (rRes.ok) {
+          const rJson = await rRes.json()
+          const schedule: Record<number, string> = rJson.data?.taskSchedule ?? {}
+          tasks = tasks.map((t) => ({ ...t, due_date: schedule[t.step_order] ?? t.due_date ?? null }))
+        }
+      }
+
+      setBatches((prev) => [...prev, { ...json.data, tasks }])
       setNewBatchName('')
       setNewBatchDue('')
       setNewBatchShootingDate('')
+      setNewBatchDraftDate('')
       setAddingBatch(false)
+      if (newBatchDraftDate) toast.success('スケジュールを保存しました')
+      // ルーターキャッシュを無効化して次回ナビゲーション時に最新データを取得
+      router.refresh()
     } finally {
       setCreatingBatch(false)
     }
@@ -711,6 +892,19 @@ export function ProjectDetailClient({ project, outsourcers: outsourcersProp = []
 
   const handleTaskDatesUpdated = (batchId: string, dates: Record<number, string | null>) => {
     setBatchScheduledDates((prev) => ({ ...prev, [batchId]: dates }))
+  }
+
+  const handleTaskHoursChange = (taskId: string, hours: number | null) => {
+    setBatches((prev) => prev.map((b) => ({
+      ...b,
+      tasks: b.tasks.map((t) => t.id === taskId ? { ...t, actual_hours: hours } : t),
+    })))
+  }
+
+  const handleTasksCreated = (batchId: string, tasks: Task[]) => {
+    setBatches((prev) => prev.map((b) => b.id === batchId ? { ...b, tasks } : b))
+    // ルーターキャッシュを無効化して次回ナビゲーション時に最新データを取得
+    router.refresh()
   }
 
   const isShootingProject = project.work_type === 'shooting_only' || project.work_type === 'shooting_and_editing'
@@ -739,6 +933,119 @@ export function ProjectDetailClient({ project, outsourcers: outsourcersProp = []
         </select>
         {statusError && <p className="mt-2 text-sm text-red-600">{statusError}</p>}
       </div>
+
+      {/* 売上・利益サマリー */}
+      {(() => {
+        const shootingCost = outsourcers.reduce((sum, o) => sum + (o.amount ?? 0), 0)
+        const editingCost = batches.reduce((sum, b) => sum + (b.outsourcer_amount ?? 0), 0)
+        const totalCost = shootingCost + editingCost
+        const profit = revenue !== null ? revenue - totalCost : null
+        const margin = revenue && revenue > 0 && profit !== null ? Math.round((profit / revenue) * 100) : null
+        const isProfit = profit !== null && profit >= 0
+        const totalHours = batches.reduce((sum, b) => sum + b.tasks.reduce((s, t) => s + (t.actual_hours ?? 0), 0), 0)
+        const effectiveRate = totalHours > 0 && revenue !== null ? Math.round((revenue - totalCost) / totalHours) : null
+
+        return (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+              <h2 className="font-semibold text-gray-800">売上・利益</h2>
+              {margin !== null && (
+                <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${
+                  margin >= 50 ? 'bg-green-100 text-green-700' :
+                  margin >= 20 ? 'bg-yellow-100 text-yellow-700' :
+                  margin >= 0  ? 'bg-orange-100 text-orange-700' :
+                                 'bg-red-100 text-red-700'
+                }`}>
+                  利益率 {margin}%
+                </span>
+              )}
+            </div>
+            <div className="px-6 py-5">
+              {/* 売上入力 */}
+              <div className="mb-4">
+                <label className="text-xs text-gray-500 mb-1 block">売上（クライアントへの請求額）</label>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-500">¥</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1000}
+                    defaultValue={revenue ?? ''}
+                    onChange={(e) => { revenueInputRef.current = e.target.value }}
+                    onBlur={(e) => handleRevenueBlur(e.target.value)}
+                    placeholder="0"
+                    className="flex-1 text-lg font-bold border border-gray-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 hover:border-gray-300 transition-colors"
+                  />
+                </div>
+              </div>
+
+              {/* 稼働時間サマリー */}
+              {totalHours > 0 && (
+                <div className="mb-4 flex items-center gap-4 px-4 py-3 bg-slate-50 rounded-xl">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">⏱</span>
+                    <div>
+                      <p className="text-xs text-gray-500">総稼働時間</p>
+                      <p className="text-lg font-bold text-gray-900">{totalHours.toFixed(1)}<span className="text-sm font-normal text-gray-500 ml-0.5">h</span></p>
+                    </div>
+                  </div>
+                  {effectiveRate !== null && (
+                    <>
+                      <div className="w-px h-10 bg-gray-200" />
+                      <div>
+                        <p className="text-xs text-gray-500">実質時給（売上−外注費 ÷ 時間）</p>
+                        <p className={`text-lg font-bold ${effectiveRate >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                          ¥{effectiveRate.toLocaleString()}<span className="text-sm font-normal text-gray-500 ml-0.5">/h</span>
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* 3列サマリー */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-gray-50 rounded-xl p-3 text-center">
+                  <p className="text-xs text-gray-500 mb-1">外注コスト</p>
+                  <p className="text-lg font-bold text-gray-800">
+                    ¥{totalCost.toLocaleString()}
+                  </p>
+                  {(shootingCost > 0 || editingCost > 0) && (
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {shootingCost > 0 && `撮影 ¥${shootingCost.toLocaleString()}`}
+                      {shootingCost > 0 && editingCost > 0 && ' + '}
+                      {editingCost > 0 && `編集 ¥${editingCost.toLocaleString()}`}
+                    </p>
+                  )}
+                </div>
+                <div className={`rounded-xl p-3 text-center ${
+                  profit === null ? 'bg-gray-50' :
+                  isProfit ? 'bg-green-50' : 'bg-red-50'
+                }`}>
+                  <p className="text-xs text-gray-500 mb-1">利益</p>
+                  <p className={`text-lg font-bold ${
+                    profit === null ? 'text-gray-400' :
+                    isProfit ? 'text-green-700' : 'text-red-700'
+                  }`}>
+                    {profit === null ? '—' : `${profit >= 0 ? '' : '-'}¥${Math.abs(profit).toLocaleString()}`}
+                  </p>
+                  {margin !== null && (
+                    <p className={`text-xs mt-0.5 font-medium ${
+                      isProfit ? 'text-green-600' : 'text-red-600'
+                    }`}>{margin}%</p>
+                  )}
+                </div>
+                <div className={`rounded-xl p-3 text-center ${revenue !== null ? 'bg-blue-50' : 'bg-gray-50'}`}>
+                  <p className="text-xs text-gray-500 mb-1">売上</p>
+                  <p className={`text-lg font-bold ${revenue !== null ? 'text-blue-700' : 'text-gray-400'}`}>
+                    {revenue !== null ? `¥${revenue.toLocaleString()}` : '未設定'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ディレクター（編集あり案件） */}
       {project.work_type !== 'shooting_only' && staffMembersProp.length > 0 && (
@@ -1013,17 +1320,15 @@ export function ProjectDetailClient({ project, outsourcers: outsourcersProp = []
                 className="w-full text-sm border border-blue-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <div className="flex gap-3 flex-wrap">
-                {isShootingProject && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-500 whitespace-nowrap">撮影日</span>
-                    <input
-                      type="date"
-                      value={newBatchShootingDate}
-                      onChange={(e) => setNewBatchShootingDate(e.target.value)}
-                      className="text-sm border border-blue-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                )}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500 whitespace-nowrap">社内初稿日</span>
+                  <input
+                    type="date"
+                    value={newBatchDraftDate}
+                    onChange={(e) => setNewBatchDraftDate(e.target.value)}
+                    className="text-sm border border-blue-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-gray-500">締日</span>
                   <input
@@ -1034,9 +1339,9 @@ export function ProjectDetailClient({ project, outsourcers: outsourcersProp = []
                   />
                 </div>
               </div>
-              {isShootingProject && newBatchShootingDate && (
+              {newBatchDraftDate && (
                 <p className="text-xs text-blue-600">
-                  📅 標準スケジュール自動設定: 撮影台本初稿（-10営業日）・台本FB（-7営業日）・台本先方提出（-5営業日）・撮影日
+                  📅 社内初稿日を基準に全16工程のスケジュールを自動設定します
                 </p>
               )}
               <div className="flex gap-2">
@@ -1049,7 +1354,7 @@ export function ProjectDetailClient({ project, outsourcers: outsourcersProp = []
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setAddingBatch(false); setNewBatchName(''); setNewBatchDue(''); setNewBatchShootingDate('') }}
+                  onClick={() => { setAddingBatch(false); setNewBatchName(''); setNewBatchDue(''); setNewBatchShootingDate(''); setNewBatchDraftDate('') }}
                   className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition-colors"
                 >
                   キャンセル
@@ -1087,13 +1392,21 @@ export function ProjectDetailClient({ project, outsourcers: outsourcersProp = []
                   {batch.tasks.length > 0 ? (
                     <BatchTaskList
                       projectId={project.id}
+                      batchId={batch.id}
+                      batchDueDate={batch.due_date ?? null}
                       tasks={batch.tasks}
                       onStatusChange={handleTaskStatusChange}
+                      onHoursChange={handleTaskHoursChange}
                       updatingId={taskUpdating}
                       scheduledDates={batchScheduledDates[batch.id]}
+                      onScheduleCascade={(dates) => handleTaskDatesUpdated(batch.id, dates)}
                     />
                   ) : (
-                    <div className="p-6 text-center text-gray-400 italic text-sm">タスクがありません</div>
+                    <InitTasksButton
+                      projectId={project.id}
+                      batchId={batch.id}
+                      onCreated={(tasks) => handleTasksCreated(batch.id, tasks)}
+                    />
                   )}
                 </div>
               ))}
@@ -1142,6 +1455,9 @@ export function ProjectDetailClient({ project, outsourcers: outsourcersProp = []
           </ul>
         </div>
       )}
+
+      {/* 動画フィードバック */}
+      <VideoFeedbackSection />
     </div>
   )
 }

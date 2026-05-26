@@ -64,6 +64,7 @@ export const createProjectSchema = z.object({
   hotel_done: z.boolean().optional(),
   transport_reservation_done: z.boolean().optional(),
   equipment_reservation_done: z.boolean().optional(),
+  revenue: z.number().int().min(0, '売上は0以上で入力してください').optional().nullable(),
   notes: z.string().max(1000, '1000文字以内で入力してください').optional().nullable(),
   outsourcers: z.array(projectOutsourcerSchema).default([]),
   batches: z.array(batchInputSchema).optional(),
@@ -80,6 +81,7 @@ export const updateTaskSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, '日付の形式が不正です (YYYY-MM-DD)')
     .optional()
     .nullable(),
+  actual_hours: z.number().min(0).max(999).optional().nullable(),
   assignee_id: z.string().uuid('担当者IDが不正です').optional().nullable(),
   notes: z.string().max(1000, '1000文字以内で入力してください').optional().nullable(),
 })

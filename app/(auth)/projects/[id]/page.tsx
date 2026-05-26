@@ -3,6 +3,8 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { StatusBadge } from '@/components/projects/StatusBadge'
 import { ProjectDetailClient } from '@/components/projects/ProjectDetailClient'
+
+export const dynamic = 'force-dynamic'
 import type { ProjectWithRelations, Outsourcer } from '@/types/projects'
 
 type PageProps = { params: Promise<{ id: string }>; searchParams: Promise<{ from?: string }> }
@@ -32,7 +34,7 @@ export default async function ProjectDetailPage({ params, searchParams }: PagePr
       .order('created_at', { ascending: true }),
     supabase
       .from('tasks')
-      .select('id, batch_id, step_order, title, status, due_date, created_at, updated_at')
+      .select('*')
       .eq('project_id', id)
       .order('step_order', { ascending: true }),
     supabase

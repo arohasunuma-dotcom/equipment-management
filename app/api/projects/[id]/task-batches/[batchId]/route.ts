@@ -1,18 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/server'
+import { calculateTaskSchedule } from '@/lib/taskTemplates'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-
-/** 指定した日付から N 営業日前の日付を返す（土日をスキップ） */
-function subtractBusinessDays(dateStr: string, days: number): string {
-  const date = new Date(dateStr + 'T00:00:00Z')
-  let remaining = days
-  while (remaining > 0) {
-    date.setUTCDate(date.getUTCDate() - 1)
-    const dow = date.getUTCDay()
-    if (dow !== 0 && dow !== 6) remaining--
-  }
-  return date.toISOString().split('T')[0]
-}
 
 const updateBatchSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -66,6 +55,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
   }
 
   // バッチの shooting_date を更新した場合
+  let taskSchedule: Record<number, string> | null = null
   if ('shooting_date' in parsed.data) {
     const shootingDate = parsed.data.shooting_date ?? null
 
@@ -75,35 +65,36 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       .update({ shooting_date: shootingDate, updated_at: new Date().toISOString() })
       .eq('id', id)
 
-    // step 1〜4 のタスクの due_date を自動更新
+    // 全タスクの due_date を自動更新
     const { data: batchTasks } = await supabase
       .from('tasks')
       .select('id, step_order')
       .eq('batch_id', batchId)
-      .in('step_order', [1, 2, 3, 4])
 
     if (batchTasks && batchTasks.length > 0) {
-      const SCHEDULE: Record<number, string | null> = shootingDate
-        ? {
-            1: subtractBusinessDays(shootingDate, 10),
-            2: subtractBusinessDays(shootingDate, 7),
-            3: subtractBusinessDays(shootingDate, 5),
-            4: shootingDate,
-          }
-        : { 1: null, 2: null, 3: null, 4: null }
+      // due_date が変わっていた場合は最新値を使用
+      const latestDueDate = parsed.data.due_date !== undefined
+        ? (parsed.data.due_date ?? null)
+        : (data.due_date ?? null)
+      taskSchedule = shootingDate
+        ? calculateTaskSchedule(shootingDate, latestDueDate)
+        : null
 
       await Promise.all(
         batchTasks.map((t) =>
           supabase
             .from('tasks')
-            .update({ due_date: SCHEDULE[t.step_order] ?? null, updated_at: new Date().toISOString() })
+            .update({
+              due_date: taskSchedule ? (taskSchedule[t.step_order] ?? null) : null,
+              updated_at: new Date().toISOString(),
+            })
             .eq('id', t.id)
         )
       )
     }
   }
 
-  return NextResponse.json({ data, error: null })
+  return NextResponse.json({ data, taskSchedule, error: null })
 }
 
 export async function DELETE(_req: NextRequest, { params }: RouteContext) {
